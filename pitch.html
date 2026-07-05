@@ -1,0 +1,708 @@
+<title>Goober — the family golf-cart hailer</title>
+<style>
+  :root{
+    --paper:#FBF6EA;
+    --paper-hi:#FFFFFF;
+    --ink:#123B45;
+    --ink-soft:#546E75;
+    --shell:#EADABE;
+    --shell-2:#F3E9D6;
+    --cart:#17A88C;
+    --cart-deep:#0E7C67;
+    --cart-tint:#DCF3ED;
+    --sun:#FFBB2E;
+    --sun-deep:#EDA100;
+    --melon:#FF6F5B;
+    --sky:#8FD3E8;
+    --sky-soft:#CDEBF4;
+
+    --font-display: ui-rounded, "SF Pro Rounded", "Hiragino Maru Gothic ProN", "Baloo 2", "Nunito", system-ui, sans-serif;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --maxw: 1120px;
+    --radius: 20px;
+  }
+
+  *{ box-sizing:border-box; }
+  html{ -webkit-text-size-adjust:100%; scroll-behavior:smooth; }
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--font-body);
+    font-size:17px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  @media (prefers-reduced-motion: reduce){
+    html{ scroll-behavior:auto; }
+    *{ animation:none !important; transition:none !important; }
+  }
+
+  h1,h2,h3{ font-family:var(--font-display); font-weight:800; line-height:1.05; text-wrap:balance; margin:0; letter-spacing:-.01em; }
+  p{ margin:0; }
+  a{ color:var(--cart-deep); }
+  :focus-visible{ outline:3px solid var(--sun); outline-offset:3px; border-radius:6px; }
+
+  .wrap{ width:min(100% - 40px, var(--maxw)); margin-inline:auto; }
+  .eyebrow{
+    font-family:var(--font-display);
+    font-weight:800;
+    text-transform:uppercase;
+    letter-spacing:.16em;
+    font-size:.74rem;
+    color:var(--cart-deep);
+  }
+  .num{ font-variant-numeric:tabular-nums; }
+
+  /* ---------- reveal ---------- */
+  .reveal{ opacity:0; transform:translateY(22px); transition:opacity .7s ease, transform .7s ease; }
+  .reveal.in{ opacity:1; transform:none; }
+
+  /* ---------- HERO ---------- */
+  .hero{
+    position:relative;
+    overflow:hidden;
+    padding:74px 0 40px;
+    background:
+      radial-gradient(120% 90% at 88% -10%, rgba(255,187,46,.42), rgba(255,187,46,0) 55%),
+      radial-gradient(90% 70% at 10% 0%, rgba(143,211,232,.34), rgba(143,211,232,0) 60%),
+      var(--paper);
+  }
+  .hero-grid{
+    display:grid;
+    grid-template-columns:1.15fr .85fr;
+    gap:38px;
+    align-items:center;
+  }
+  .brandline{ display:flex; align-items:center; gap:14px; margin-bottom:18px; }
+  .peanut-badge{
+    width:46px; height:46px; border-radius:14px;
+    background:var(--sun); color:var(--ink);
+    display:grid; place-items:center; font-size:26px;
+    box-shadow:0 6px 0 var(--sun-deep);
+    transform:rotate(-6deg);
+  }
+  .brandline .kicker{ font-family:var(--font-display); font-weight:800; letter-spacing:.02em; font-size:1.05rem; }
+  .wordmark{
+    font-family:var(--font-display);
+    font-weight:800;
+    font-size:clamp(3.6rem, 11vw, 7.2rem);
+    line-height:.92;
+    letter-spacing:-.03em;
+    color:var(--cart-deep);
+    margin-bottom:.12em;
+  }
+  .wordmark .oo{ color:var(--sun-deep); }
+  .tagline{
+    font-family:var(--font-display); font-weight:800;
+    font-size:clamp(1.25rem, 3vw, 1.7rem);
+    color:var(--ink);
+    margin-bottom:14px;
+  }
+  .lede{ font-size:1.12rem; color:var(--ink-soft); max-width:32ch; margin-bottom:24px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:9px; }
+  .chip{
+    background:var(--paper-hi);
+    border:1.5px solid var(--shell);
+    border-radius:999px;
+    padding:7px 14px;
+    font-size:.9rem; font-weight:600;
+    display:inline-flex; align-items:center; gap:7px;
+    box-shadow:0 2px 0 rgba(18,59,69,.05);
+  }
+
+  .cart-stage{ display:grid; place-items:center; }
+  .cart-svg{ width:min(100%, 380px); height:auto; }
+  .floaty{ animation:bob 4.6s ease-in-out infinite; transform-origin:center; }
+  @keyframes bob{ 0%,100%{ transform:translateY(0) rotate(-1deg);} 50%{ transform:translateY(-12px) rotate(1deg);} }
+
+  /* ---------- SECTION shell ---------- */
+  section{ padding:58px 0; }
+  .sec-head{ max-width:60ch; margin-bottom:30px; }
+  .sec-head h2{ font-size:clamp(1.9rem, 4vw, 2.75rem); margin:.35em 0 .3em; }
+  .sec-head p{ color:var(--ink-soft); font-size:1.08rem; }
+
+  .band{ background:var(--paper-hi); border-block:1.5px solid var(--shell); }
+  .band-ink{ background:var(--ink); color:var(--shell-2); }
+  .band-ink h2{ color:#fff; }
+  .band-ink .eyebrow{ color:var(--sun); }
+  .band-ink .sec-head p{ color:rgba(243,233,214,.8); }
+
+  /* ---------- PROBLEM ---------- */
+  .beat{
+    display:grid; grid-template-columns:auto 1fr; gap:18px; align-items:start;
+    padding:16px 0;
+  }
+  .beat + .beat{ border-top:1.5px dashed var(--shell); }
+  .beat .icon{ font-size:1.5rem; width:52px; height:52px; border-radius:14px; display:grid; place-items:center; background:var(--cart-tint); }
+  .beat.bad .icon{ background:#FCE3DE; }
+  .beat h3{ font-size:1.12rem; margin-bottom:2px; }
+  .beat p{ color:var(--ink-soft); font-size:.99rem; }
+
+  /* ---------- PHONE MOCKUPS ---------- */
+  .flow{
+    display:flex; gap:26px; overflow-x:auto; padding:8px 4px 26px;
+    scroll-snap-type:x mandatory;
+  }
+  .flow-item{ scroll-snap-align:center; flex:0 0 auto; width:272px; }
+  .flow-cap{ margin-top:16px; }
+  .flow-cap .step{
+    font-family:var(--font-display); font-weight:800; color:var(--cart-deep);
+    font-size:.78rem; letter-spacing:.12em; text-transform:uppercase;
+  }
+  .flow-cap h3{ font-size:1.12rem; margin:2px 0 4px; }
+  .flow-cap p{ color:var(--ink-soft); font-size:.94rem; }
+
+  .phone{
+    width:272px; background:#0c2a31; border-radius:40px; padding:11px;
+    box-shadow:0 26px 50px -22px rgba(12,42,49,.7), 0 4px 0 #071c21;
+  }
+  .screen{
+    position:relative;
+    background:var(--paper);
+    border-radius:30px; overflow:hidden;
+    height:590px; display:flex; flex-direction:column;
+  }
+  .notch{ position:absolute; top:9px; left:50%; transform:translateX(-50%); width:98px; height:20px; background:#0c2a31; border-radius:0 0 14px 14px; z-index:5; }
+  .sbar{ display:flex; justify-content:space-between; align-items:center; padding:11px 20px 4px; font-size:.72rem; font-weight:700; color:var(--ink); }
+  .sbar .dots{ letter-spacing:2px; }
+
+  .appbar{ display:flex; align-items:center; gap:9px; padding:6px 16px 12px; }
+  .appbar .logo{ width:28px; height:28px; border-radius:9px; background:var(--sun); display:grid; place-items:center; font-size:16px; box-shadow:0 3px 0 var(--sun-deep); }
+  .appbar .title{ font-family:var(--font-display); font-weight:800; font-size:1.15rem; }
+  .appbar .grp{ margin-left:auto; font-size:.72rem; font-weight:700; color:var(--ink-soft); background:var(--shell-2); padding:4px 9px; border-radius:999px; }
+
+  .scr-body{ padding:4px 16px 18px; display:flex; flex-direction:column; gap:11px; flex:1; overflow-y:auto; scrollbar-width:none; }
+  .scr-body::-webkit-scrollbar{ display:none; }
+  .scr-title{ font-family:var(--font-display); font-weight:800; font-size:1.02rem; padding:2px 0; }
+
+  .cta{
+    border:none; width:100%; cursor:default;
+    font-family:var(--font-display); font-weight:800; font-size:1.05rem;
+    color:#fff; background:var(--cart); padding:15px; border-radius:16px;
+    box-shadow:0 5px 0 var(--cart-deep);
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .cta.sun{ background:var(--sun); color:var(--ink); box-shadow:0 5px 0 var(--sun-deep); }
+
+  .card{ background:var(--paper-hi); border:1.5px solid var(--shell); border-radius:16px; padding:12px; }
+  .fi{ display:flex; gap:10px; align-items:flex-start; }
+  .fi .av{ flex:0 0 auto; width:34px; height:34px; border-radius:50%; display:grid; place-items:center; font-size:.8rem; font-weight:800; color:#fff; }
+  .fi .body{ min-width:0; flex:1; }
+  .fi .who{ font-weight:800; font-size:.92rem; }
+  .fi .meta{ font-size:.8rem; color:var(--ink-soft); }
+  .fi .route{ font-size:.82rem; font-weight:600; margin-top:2px; }
+  .tag{ display:inline-flex; align-items:center; gap:4px; font-size:.72rem; font-weight:800; padding:3px 8px; border-radius:999px; margin-top:6px; }
+  .tag.go{ background:var(--cart-tint); color:var(--cart-deep); }
+  .tag.open{ background:#FFF1D2; color:var(--sun-deep); }
+  .tag.done{ background:var(--shell-2); color:var(--ink-soft); }
+  .tag.offer{ background:#FCE3DE; color:#C64632; }
+  .muted-item{ opacity:.55; }
+
+  /* avatars palette */
+  .a-teal{ background:var(--cart); } .a-sun{ background:var(--sun-deep); }
+  .a-melon{ background:var(--melon); } .a-sky{ background:#3E9FC0; }
+  .a-plum{ background:#8A6BB0; } .a-ink{ background:var(--ink); }
+
+  .field{ background:var(--paper-hi); border:1.5px solid var(--shell); border-radius:13px; padding:9px 12px; display:flex; align-items:center; gap:9px; font-size:.9rem; font-weight:600; }
+  .field .lab{ font-size:.68rem; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-soft); font-weight:800; }
+  .field .val{ margin-left:auto; color:var(--ink); display:flex; align-items:center; gap:6px; }
+  .caret{ color:var(--ink-soft); }
+
+  .seg{ display:flex; gap:6px; }
+  .seg .opt{ flex:1; text-align:center; border:1.5px solid var(--shell); border-radius:11px; padding:8px 0; font-weight:800; font-size:.85rem; background:var(--paper-hi); color:var(--ink-soft); }
+  .seg .opt.on{ background:var(--cart); color:#fff; border-color:var(--cart); box-shadow:0 3px 0 var(--cart-deep); }
+  .seg.sunsel .opt.on{ background:var(--sun); color:var(--ink); border-color:var(--sun); box-shadow:0 3px 0 var(--sun-deep); }
+
+  .avrow{ display:flex; gap:8px; flex-wrap:wrap; }
+  .avpick{ display:flex; flex-direction:column; align-items:center; gap:4px; width:52px; }
+  .avpick .av{ width:42px; height:42px; border-radius:50%; display:grid; place-items:center; color:#fff; font-weight:800; font-size:.85rem; border:2.5px solid transparent; }
+  .avpick.on .av{ border-color:var(--sun); box-shadow:0 0 0 2px #fff inset; }
+  .avpick .nm{ font-size:.66rem; font-weight:700; color:var(--ink-soft); }
+
+  .resp{ display:flex; flex-direction:column; gap:8px; }
+  .rbtn{ display:flex; align-items:center; gap:9px; padding:12px 13px; border-radius:13px; font-weight:800; font-size:.9rem; border:1.5px solid var(--shell); background:var(--paper-hi); }
+  .rbtn.p{ background:var(--cart); color:#fff; border-color:var(--cart); box-shadow:0 4px 0 var(--cart-deep); }
+  .rbtn .sub{ font-weight:600; font-size:.72rem; color:var(--ink-soft); margin-left:auto; }
+  .rbtn.p .sub{ color:rgba(255,255,255,.8); }
+
+  .chatpeek{ margin-top:2px; display:flex; flex-direction:column; gap:6px; }
+  .bub{ max-width:80%; padding:8px 11px; border-radius:14px; font-size:.82rem; }
+  .bub.them{ background:var(--shell-2); align-self:flex-start; border-bottom-left-radius:4px; }
+  .bub.me{ background:var(--cart-tint); align-self:flex-end; border-bottom-right-radius:4px; }
+  .watchers{ font-size:.68rem; color:var(--ink-soft); text-align:center; }
+
+  /* mini map */
+  .map{ position:relative; border-radius:14px; overflow:hidden; border:1.5px solid var(--shell); }
+  .map svg{ display:block; width:100%; height:auto; }
+  .status-line{ display:flex; flex-direction:column; gap:0; margin-top:2px; }
+  .sl{ display:flex; align-items:center; gap:10px; padding:7px 0; font-size:.86rem; font-weight:700; }
+  .sl .dot{ width:16px; height:16px; border-radius:50%; border:2.5px solid var(--shell); background:#fff; flex:0 0 auto; }
+  .sl.done .dot{ background:var(--cart); border-color:var(--cart); }
+  .sl.now .dot{ background:var(--sun); border-color:var(--sun); animation:pulse 1.6s ease-in-out infinite; }
+  .sl.todo{ color:var(--ink-soft); }
+  @keyframes pulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(255,187,46,.55);} 50%{ box-shadow:0 0 0 7px rgba(255,187,46,0);} }
+  .callbtn{ display:flex; align-items:center; justify-content:center; gap:8px; padding:11px; border-radius:13px; border:1.5px solid var(--cart); color:var(--cart-deep); font-weight:800; font-size:.9rem; background:var(--cart-tint); }
+
+  /* leaderboard */
+  .lb{ display:flex; flex-direction:column; gap:8px; }
+  .lb-row{ display:flex; align-items:center; gap:11px; padding:10px 12px; border-radius:14px; border:1.5px solid var(--shell); background:var(--paper-hi); }
+  .lb-row .rank{ font-family:var(--font-display); font-weight:800; width:22px; text-align:center; color:var(--ink-soft); }
+  .lb-row .nm{ font-weight:800; font-size:.92rem; }
+  .lb-row .sub{ font-size:.72rem; color:var(--ink-soft); }
+  .lb-row .pts{ margin-left:auto; font-family:var(--font-display); font-weight:800; font-size:1.15rem; color:var(--cart-deep); }
+  .lb-row.first{ background:linear-gradient(120deg,#FFF6DE,#FFE7B0); border-color:var(--sun); }
+  .lb-row.first .pts{ color:var(--sun-deep); }
+  .crown{ font-size:1.1rem; }
+
+  /* generic content grids */
+  .grid{ display:grid; gap:18px; }
+  .g2{ grid-template-columns:repeat(2,1fr); }
+  .g3{ grid-template-columns:repeat(3,1fr); }
+  .tile{ background:var(--paper-hi); border:1.5px solid var(--shell); border-radius:var(--radius); padding:22px; box-shadow:0 3px 0 rgba(18,59,69,.04); }
+  .tile .ic{ font-size:1.7rem; }
+  .tile h3{ font-size:1.15rem; margin:12px 0 6px; }
+  .tile p{ color:var(--ink-soft); font-size:.97rem; }
+
+  /* vs table */
+  .vs{ overflow-x:auto; border-radius:var(--radius); border:1.5px solid var(--shell); background:var(--paper-hi); }
+  table.vs-t{ width:100%; border-collapse:collapse; min-width:520px; }
+  .vs-t th, .vs-t td{ text-align:left; padding:15px 18px; border-bottom:1.5px solid var(--shell); vertical-align:top; }
+  .vs-t thead th{ font-family:var(--font-display); font-size:.95rem; }
+  .vs-t th:first-child{ color:var(--ink-soft); font-weight:700; font-size:.9rem; width:34%; }
+  .vs-t .uber{ color:var(--ink-soft); }
+  .vs-t .goob{ font-weight:600; }
+  .vs-t tr:last-child td{ border-bottom:none; }
+  .vs-t .h-uber{ color:var(--ink-soft); }
+  .vs-t .h-goob{ color:var(--cart-deep); }
+
+  /* IOU board */
+  .iou{ display:flex; flex-direction:column; gap:10px; }
+  .iou-row{ display:flex; align-items:center; gap:12px; padding:13px 15px; background:var(--paper-hi); border:1.5px solid var(--shell); border-radius:14px; }
+  .iou-row .who{ font-weight:800; }
+  .iou-row .arrow{ color:var(--ink-soft); }
+  .iou-row .owe{ margin-left:auto; font-size:.9rem; font-weight:700; color:#C64632; background:#FCE3DE; padding:5px 11px; border-radius:999px; }
+  .iou-row.paid .owe{ color:var(--cart-deep); background:var(--cart-tint); }
+
+  /* join steps */
+  .steps{ counter-reset:s; display:grid; gap:16px; grid-template-columns:repeat(3,1fr); }
+  .stepc{ background:var(--paper-hi); border:1.5px solid var(--shell); border-radius:var(--radius); padding:22px; position:relative; }
+  .stepc::before{ counter-increment:s; content:counter(s); font-family:var(--font-display); font-weight:800; font-size:1.1rem; color:#fff; background:var(--cart); width:34px; height:34px; border-radius:50%; display:grid; place-items:center; box-shadow:0 3px 0 var(--cart-deep); }
+  .stepc h3{ font-size:1.08rem; margin:14px 0 5px; }
+  .stepc p{ color:var(--ink-soft); font-size:.95rem; }
+
+  /* future / footnote */
+  .later{ display:flex; gap:26px; align-items:center; flex-wrap:wrap; }
+  .later .txt{ flex:1; min-width:260px; }
+  .pill-soon{ display:inline-block; background:var(--sun); color:var(--ink); font-weight:800; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; padding:5px 11px; border-radius:999px; margin-bottom:12px; }
+
+  .madeby{ font-size:.95rem; color:rgba(243,233,214,.72); }
+  .madeby code{ background:rgba(255,255,255,.08); padding:2px 7px; border-radius:6px; font-size:.85em; color:#fff; }
+  .made-grid{ display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
+  .made-grid .m{ border:1.5px solid rgba(255,255,255,.16); border-radius:12px; padding:10px 14px; font-size:.85rem; }
+  .made-grid .m b{ color:#fff; font-family:var(--font-display); }
+
+  footer{ padding:40px 0 56px; text-align:center; color:var(--ink-soft); }
+  footer .peanut-badge{ margin:0 auto 14px; }
+
+  .hint{ text-align:center; font-size:.82rem; color:var(--ink-soft); margin-top:2px; }
+
+  @media (max-width:860px){
+    .hero-grid{ grid-template-columns:1fr; }
+    .cart-stage{ order:-1; }
+    .cart-svg{ width:min(78%,320px); }
+    .g3{ grid-template-columns:1fr; }
+    .g2{ grid-template-columns:1fr; }
+    .steps{ grid-template-columns:1fr; }
+  }
+</style>
+
+<!-- ============ HERO ============ -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <div class="brandline">
+        <span class="peanut-badge">🥜</span>
+        <span class="kicker">Beach '26 · family only</span>
+      </div>
+      <h1 class="wordmark">G<span class="oo">oo</span>ber</h1>
+      <p class="tagline">It's like Uber. For golf carts. For&nbsp;us.</p>
+      <p class="lede">Stop texting five people to bum a ride to the pier. Tap a cousin, they roll up. That's the whole thing.</p>
+      <div class="chips">
+        <span class="chip">🛺 Hail a cart</span>
+        <span class="chip">🍪 Offer anything — cookies to cash</span>
+        <span class="chip">🏆 Win the Golden Goober</span>
+      </div>
+    </div>
+    <div class="cart-stage">
+      <svg class="cart-svg floaty" viewBox="0 0 300 210" role="img" aria-label="A friendly golf cart">
+        <ellipse cx="150" cy="190" rx="112" ry="13" fill="rgba(18,59,69,.12)"/>
+        <!-- canopy -->
+        <rect x="56" y="34" width="188" height="15" rx="7.5" fill="var(--sun)"/>
+        <rect x="56" y="45" width="188" height="5" rx="2.5" fill="var(--sun-deep)"/>
+        <rect x="66" y="46" width="8" height="58" rx="4" fill="var(--cart-deep)"/>
+        <rect x="226" y="46" width="8" height="52" rx="4" fill="var(--cart-deep)"/>
+        <!-- body floor -->
+        <rect x="52" y="120" width="196" height="30" rx="12" fill="var(--cart)"/>
+        <!-- front hood -->
+        <path d="M214 120 h30 a10 10 0 0 1 10 10 v14 a6 6 0 0 1 -6 6 h-34 z" fill="var(--cart-deep)"/>
+        <circle cx="246" cy="118" r="6" fill="var(--sun)"/>
+        <!-- seat base + back -->
+        <rect x="80" y="98" width="118" height="26" rx="9" fill="var(--cart)"/>
+        <rect x="80" y="62" width="20" height="44" rx="7" fill="var(--cart-deep)"/>
+        <!-- little peanut passenger -->
+        <g transform="translate(128 70)">
+          <ellipse cx="12" cy="10" rx="12" ry="14" fill="var(--sun)"/>
+          <ellipse cx="12" cy="26" rx="14" ry="15" fill="var(--sun)"/>
+          <circle cx="8" cy="8" r="1.7" fill="var(--ink)"/>
+          <circle cx="16" cy="8" r="1.7" fill="var(--ink)"/>
+          <path d="M8 14 q4 4 8 0" stroke="var(--ink)" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+        </g>
+        <!-- wheels -->
+        <circle cx="94" cy="156" r="24" fill="var(--ink)"/>
+        <circle cx="94" cy="156" r="9.5" fill="var(--shell)"/>
+        <circle cx="212" cy="156" r="24" fill="var(--ink)"/>
+        <circle cx="212" cy="156" r="9.5" fill="var(--shell)"/>
+      </svg>
+    </div>
+  </div>
+</header>
+
+<!-- ============ PROBLEM ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">Why bother</span>
+      <h2>You know this dance already.</h2>
+      <p>Every 4th of July we scatter across four rental houses, share a handful of golf carts, and coordinate the whole thing by phone tag. Goober turns that circus into two taps.</p>
+    </div>
+    <div class="reveal">
+      <div class="beat bad">
+        <div class="icon">📞</div>
+        <div><h3>The old way</h3><p>Call Todd — he passed the cart to Susan. Text Susan — no answer. Call Wendel — he's charging. Meanwhile you're melting on the pier.</p></div>
+      </div>
+      <div class="beat">
+        <div class="icon">🛺</div>
+        <div><h3>The Goober way</h3><p>Open the app, see who's around, tap "Get a ride." Somebody grabs it, rolls up, you hop on. The whole family can see it happening, so nobody double-drives.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CORE FLOW / MOCKUPS ============ -->
+<section class="band">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">A ride, start to finish</span>
+      <h2>Here's how a Goober works.</h2>
+      <p>Five taps, five screens. Swipe through the actual flow — from "I need a ride" to "banked my points."</p>
+    </div>
+
+    <div class="flow reveal" aria-label="App screens, swipe horizontally">
+
+      <!-- 1 · FEED -->
+      <div class="flow-item">
+        <div class="phone"><div class="screen"><div class="notch"></div>
+          <div class="sbar"><span class="num">4:12</span><span class="dots">🔋 ᯤ ●●●</span></div>
+          <div class="appbar"><span class="logo">🥜</span><span class="title">Goober</span><span class="grp">Beach '26</span></div>
+          <div class="scr-body">
+            <button class="cta">🛺 Get a ride</button>
+            <div class="scr-title">What's happening</div>
+            <div class="card fi">
+              <div class="av a-melon">E</div>
+              <div class="body"><div class="who">Emily → Todd</div><div class="route">The Pier → Grandma's · 2 riders</div><span class="tag go">🛺 On my way</span></div>
+            </div>
+            <div class="card fi">
+              <div class="av a-sun">W</div>
+              <div class="body"><div class="who">Wendel</div><div class="route">Sandbar → Grandma's</div><span class="tag open">🙋 anyone? · 🍺 offered</span></div>
+            </div>
+            <div class="card fi muted-item">
+              <div class="av a-teal">B</div>
+              <div class="body"><div class="who">Bob drove Drew</div><div class="route">Ice Cream Shack → Dune St.</div><span class="tag done">✓ Delivered · +2</span></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="flow-cap">
+          <div class="step">01 · The feed</div>
+          <h3>Open to the whole scene</h3>
+          <p>Every request and ride, live. Half the time you'll spot a cart already headed your way before you even ask.</p>
+        </div>
+      </div>
+
+      <!-- 2 · REQUEST -->
+      <div class="flow-item">
+        <div class="phone"><div class="screen"><div class="notch"></div>
+          <div class="sbar"><span class="num">4:13</span><span class="dots">🔋 ᯤ ●●●</span></div>
+          <div class="appbar"><span class="logo">🥜</span><span class="title">Get a ride</span></div>
+          <div class="scr-body">
+            <div class="field"><span class="lab">From</span><span class="val">📍 The Pier <span class="caret">▾</span></span></div>
+            <div class="field"><span class="lab">To</span><span class="val">🏠 Grandma's <span class="caret">▾</span></span></div>
+            <div class="scr-title">Who's driving?</div>
+            <div class="avrow">
+              <div class="avpick on"><div class="av a-melon">🙋</div><div class="nm">Anyone</div></div>
+              <div class="avpick"><div class="av a-sun">T</div><div class="nm">Todd</div></div>
+              <div class="avpick"><div class="av a-teal">B</div><div class="nm">Bob</div></div>
+              <div class="avpick"><div class="av a-sky">S</div><div class="nm">Susan</div></div>
+              <div class="avpick"><div class="av a-plum">A</div><div class="nm">Angie</div></div>
+            </div>
+            <div class="scr-title">When</div>
+            <div class="seg"><div class="opt on">Now</div><div class="opt">At 9:00</div><div class="opt">Pick time</div></div>
+            <div class="scr-title">How many?</div>
+            <div class="seg sunsel"><div class="opt">1</div><div class="opt on">2</div><div class="opt">3</div><div class="opt">4+</div></div>
+            <div class="field"><span class="lab">Offer</span><span class="val">🍪 fresh cookies</span></div>
+            <button class="cta">Send ping →</button>
+          </div>
+        </div></div>
+        <div class="flow-cap">
+          <div class="step">02 · Ask</div>
+          <h3>Ping a person — or anyone</h3>
+          <p>Tap one cousin, or broadcast to the whole group. Schedule ahead for the fireworks run. Sweeten it with an offer.</p>
+        </div>
+      </div>
+
+      <!-- 3 · RESPOND -->
+      <div class="flow-item">
+        <div class="phone"><div class="screen"><div class="notch"></div>
+          <div class="sbar"><span class="num">4:13</span><span class="dots">🔋 ᯤ ●●●</span></div>
+          <div class="appbar"><span class="logo">🥜</span><span class="title">Emily needs a ride</span></div>
+          <div class="scr-body">
+            <div class="card fi">
+              <div class="av a-melon">E</div>
+              <div class="body"><div class="who">Emily</div><div class="route">The Pier → Grandma's</div><div class="meta">2 riders · now</div><span class="tag offer">🍪 fresh cookies</span></div>
+            </div>
+            <div class="scr-title">Your call</div>
+            <div class="resp">
+              <div class="rbtn p">🛺 On my way <span class="sub">+ coming from?</span></div>
+              <div class="rbtn">🚫 Can't right now</div>
+              <div class="rbtn">🤷 No cart… <span class="sub">tag who has it</span></div>
+              <div class="rbtn">👋 Someone else will come</div>
+            </div>
+            <div class="chatpeek">
+              <div class="bub them">u still at the pier? 🌊</div>
+              <div class="bub me">yep by the ice cream 🍦</div>
+            </div>
+            <div class="watchers">👀 4 family members watching this thread</div>
+          </div>
+        </div></div>
+        <div class="flow-cap">
+          <div class="step">03 · Respond</div>
+          <h3>More than yes or no</h3>
+          <p>Say you're rolling, that you're out of carts (and who took yours), or that you're sending someone else. Chat if you need to — the family can watch, but only you two can talk.</p>
+        </div>
+      </div>
+
+      <!-- 4 · EN ROUTE -->
+      <div class="flow-item">
+        <div class="phone"><div class="screen"><div class="notch"></div>
+          <div class="sbar"><span class="num">4:16</span><span class="dots">🔋 ᯤ ●●●</span></div>
+          <div class="appbar"><span class="logo">🥜</span><span class="title">Todd is on the way</span></div>
+          <div class="scr-body">
+            <div class="map">
+              <svg viewBox="0 0 240 150" role="img" aria-label="Map showing the cart's route">
+                <rect width="240" height="150" fill="var(--sky-soft)"/>
+                <path d="M0 92 C60 78 90 104 150 96 C200 90 220 100 240 96 L240 150 L0 150 Z" fill="#F2E6C8"/>
+                <path d="M0 92 C60 78 90 104 150 96 C200 90 220 100 240 96" fill="none" stroke="var(--sky)" stroke-width="4"/>
+                <path d="M56 118 C90 108 120 92 176 66" fill="none" stroke="var(--cart)" stroke-width="4" stroke-dasharray="2 8" stroke-linecap="round"/>
+                <g transform="translate(170 58)"><circle r="12" fill="#fff" stroke="var(--cart)" stroke-width="3"/><text x="0" y="5" text-anchor="middle" font-size="13">🛺</text></g>
+                <g transform="translate(50 120)"><circle r="9" fill="var(--melon)"/><circle r="3.4" cy="0" fill="#fff"/></g>
+              </svg>
+            </div>
+            <div class="status-line">
+              <div class="sl done"><span class="dot"></span>On my way · from Grandma's 🏠</div>
+              <div class="sl now"><span class="dot"></span>2 min out</div>
+              <div class="sl todo"><span class="dot"></span>I'm here</div>
+              <div class="sl todo"><span class="dot"></span>Delivered</div>
+            </div>
+            <div class="bub them">coming from Grandma's, hang tight!</div>
+            <button class="callbtn">📞 Call Todd</button>
+          </div>
+        </div></div>
+        <div class="flow-cap">
+          <div class="step">04 · On the way</div>
+          <h3>Watch the cart roll in</h3>
+          <p>See roughly where your ride is, get a buzz when they say "I'm here," and one-tap to call if you'd rather just yell into a phone.</p>
+        </div>
+      </div>
+
+      <!-- 5 · LEADERBOARD -->
+      <div class="flow-item">
+        <div class="phone"><div class="screen"><div class="notch"></div>
+          <div class="sbar"><span class="num">10:48</span><span class="dots">🔋 ᯤ ●●●</span></div>
+          <div class="appbar"><span class="logo">🥜</span><span class="title">Leaderboard</span><span class="grp">🏆 Beach '26</span></div>
+          <div style="padding:2px 16px 8px">
+            <div class="card" style="background:linear-gradient(120deg,#FFF6DE,#FFE7A8);border-color:var(--sun);display:flex;align-items:center;gap:10px;padding:10px 12px;">
+              <div style="font-size:1.5rem">🏆</div>
+              <div><div style="font-family:var(--font-display);font-weight:800;font-size:.95rem;">The Golden Goober</div><div style="font-size:.74rem;color:var(--ink-soft)">Most rides all week keeps the trophy</div></div>
+            </div>
+          </div>
+          <div class="scr-body">
+            <div class="scr-title">Ride champions · Beach '26</div>
+            <div class="lb">
+              <div class="lb-row first"><span class="rank">1</span><span class="crown">👑</span><div><div class="nm">Bob</div><div class="sub">47 rides · 6 cross-house heroics</div></div><span class="pts num">53</span></div>
+              <div class="lb-row"><span class="rank">2</span><div><div class="nm">Todd</div><div class="sub">28 rides</div></div><span class="pts num">31</span></div>
+              <div class="lb-row"><span class="rank">3</span><div><div class="nm">Susan</div><div class="sub">19 rides</div></div><span class="pts num">22</span></div>
+              <div class="lb-row"><span class="rank">4</span><div><div class="nm">Emily</div><div class="sub">11 rides</div></div><span class="pts num">14</span></div>
+              <div class="lb-row"><span class="rank">5</span><div><div class="nm">Angie</div><div class="sub">10 rides</div></div><span class="pts num">12</span></div>
+              <div class="lb-row"><span class="rank">6</span><div><div class="nm">Joe</div><div class="sub">9 rides</div></div><span class="pts num">11</span></div>
+              <div class="lb-row"><span class="rank">7</span><div><div class="nm">Nancy</div><div class="sub">8 rides</div></div><span class="pts num">9</span></div>
+              <div class="lb-row"><span class="rank">8</span><div><div class="nm">Bert</div><div class="sub">7 rides</div></div><span class="pts num">8</span></div>
+              <div class="lb-row"><span class="rank">9</span><div><div class="nm">Anthony</div><div class="sub">6 rides</div></div><span class="pts num">7</span></div>
+              <div class="lb-row"><span class="rank">10</span><div><div class="nm">Brett</div><div class="sub">5 rides</div></div><span class="pts num">6</span></div>
+              <div class="lb-row"><span class="rank">11</span><div><div class="nm">Leslie</div><div class="sub">5 rides</div></div><span class="pts num">5</span></div>
+              <div class="lb-row"><span class="rank">12</span><div><div class="nm">Tony</div><div class="sub">4 rides</div></div><span class="pts num">5</span></div>
+              <div class="lb-row"><span class="rank">13</span><div><div class="nm">Cathy</div><div class="sub">4 rides</div></div><span class="pts num">4</span></div>
+              <div class="lb-row"><span class="rank">14</span><div><div class="nm">Drew</div><div class="sub">3 rides</div></div><span class="pts num">3</span></div>
+              <div class="lb-row"><span class="rank">15</span><div><div class="nm">Victoria</div><div class="sub">3 rides</div></div><span class="pts num">3</span></div>
+              <div class="lb-row"><span class="rank">16</span><div><div class="nm">Mary</div><div class="sub">2 rides</div></div><span class="pts num">2</span></div>
+              <div class="lb-row"><span class="rank">17</span><div><div class="nm">Allison</div><div class="sub">2 rides</div></div><span class="pts num">2</span></div>
+              <div class="lb-row"><span class="rank">18</span><div><div class="nm">Jamie</div><div class="sub">1 ride</div></div><span class="pts num">1</span></div>
+              <div class="lb-row"><span class="rank">19</span><div><div class="nm">Troy</div><div class="sub">1 ride</div></div><span class="pts num">1</span></div>
+              <div class="lb-row"><span class="rank">20</span><div><div class="nm">Wendel</div><div class="sub">0 rides · mostly napping 😴</div></div><span class="pts num">0</span></div>
+            </div>
+          </div>
+        </div></div>
+        <div class="flow-cap">
+          <div class="step">05 · Glory</div>
+          <h3>Rack up Goober Points</h3>
+          <p>One point per passenger, a bonus for driving in from another house. Top driver at week's end takes home the Golden Goober.</p>
+        </div>
+      </div>
+
+    </div>
+    <p class="hint">← swipe to see all five screens →</p>
+  </div>
+</section>
+
+<!-- ============ NOT UBER ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">Same idea, different soul</span>
+      <h2>It borrows the good part of Uber and throws out the rest.</h2>
+      <p>No strangers, no surge pricing, no obligation. Just family, carts, and bragging rights.</p>
+    </div>
+    <div class="vs reveal">
+      <table class="vs-t">
+        <thead><tr><th></th><th class="h-uber">Uber</th><th class="h-goob">Goober 🥜</th></tr></thead>
+        <tbody>
+          <tr><th>Who's on it</th><td class="uber">Strangers, anyone</td><td class="goob">Only your family, invite-only</td></tr>
+          <tr><th>Payment</th><td class="uber">Real money + surge pricing</td><td class="goob">Cookies, beers, favors, cash — whatever you offer</td></tr>
+          <tr><th>Getting a driver</th><td class="uber">Auto-matched to whoever</td><td class="goob">Ping a specific person, or ask everyone</td></tr>
+          <tr><th>Planning ahead</th><td class="uber">Sort of</td><td class="goob">Schedule the fireworks pickup, get reminders</td></tr>
+          <tr><th>The point</th><td class="uber">Get from A to B</td><td class="goob">Get from A to B and win a trophy</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MONEY / IOU ============ -->
+<section class="band">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">The currency of Goober</span>
+      <h2>No fares. Just offers.</h2>
+      <p>Offer whatever you want for a ride — cookies, a favor, or cold hard cash. Goober quietly keeps the tab, and on the last day it settles up on the family "who owes who" board.</p>
+    </div>
+    <div class="grid g2" style="align-items:start">
+      <div class="reveal">
+        <div class="iou">
+          <div class="iou-row"><span class="who">Emily</span><span class="arrow">owes</span><span class="who">Todd</span><span class="owe">🍪 cookies</span></div>
+          <div class="iou-row"><span class="who">Drew</span><span class="arrow">owes</span><span class="who">Bob</span><span class="owe">🍺 one cold beer</span></div>
+          <div class="iou-row"><span class="who">Wendel</span><span class="arrow">owes</span><span class="who">Susan</span><span class="owe">a big favor</span></div>
+          <div class="iou-row paid"><span class="who">Todd</span><span class="arrow">paid</span><span class="who">Emily</span><span class="owe">✓ settled</span></div>
+        </div>
+      </div>
+      <div class="reveal">
+        <div class="tile" style="height:100%">
+          <div class="ic">🧾</div>
+          <h3>Two kinds of scorekeeping</h3>
+          <p style="margin-bottom:14px"><b>The IOU board</b> tracks the promises — the cookies, beers, favors, and occasional five bucks you offered. Tap "paid" when you settle up. Purely for fun and light-hearted guilt.</p>
+          <p><b>Goober Points</b> are the real competition — earned by driving, never spent, feeding straight into the leaderboard and the Golden Goober.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ JOIN ============ -->
+<section>
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="eyebrow">Getting everyone on</span>
+      <h2>You're in before your sunscreen dries.</h2>
+      <p>No passwords, no email, no accounts to remember. I set up the group each year and send everyone a link.</p>
+    </div>
+    <div class="steps reveal">
+      <div class="stepc"><h3>Tap your link</h3><p>I text you a personal Goober link. Tap it — it already knows your name and number from last year.</p></div>
+      <div class="stepc"><h3>Confirm it's you</h3><p>"Joining as Wendel 👍" — check it's right, tweak your name if you want to be "Fireworks Champ" this year.</p></div>
+      <div class="stepc"><h3>Start Goobering</h3><p>You land in the feed. Request a ride, offer to drive, talk trash on the leaderboard. That's it.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LATER ============ -->
+<section class="band">
+  <div class="wrap">
+    <div class="later reveal">
+      <div class="txt">
+        <span class="pill-soon">Maybe someday</span>
+        <h2 style="font-size:clamp(1.6rem,3.5vw,2.2rem);margin-bottom:10px">A live map of every cart</h2>
+        <p style="color:var(--ink-soft);font-size:1.05rem">If you all love the first version, the dream is a little GPS tag on each cart — so the map shows exactly where every golf cart is, all the time. No more "which house has the good cart?" We'll only build it if year one is a hit.</p>
+      </div>
+      <div style="flex:0 0 auto">
+        <div class="map" style="width:230px">
+          <svg viewBox="0 0 220 150" role="img" aria-label="Imagined live cart map">
+            <rect width="220" height="150" fill="var(--sky-soft)"/>
+            <path d="M0 96 C50 84 90 108 150 100 C190 95 210 102 220 100 L220 150 L0 150 Z" fill="#F2E6C8"/>
+            <g transform="translate(46 60)"><circle r="13" fill="#fff" stroke="var(--cart)" stroke-width="3"/><text x="0" y="5" text-anchor="middle" font-size="14">🛺</text></g>
+            <g transform="translate(120 108)"><circle r="13" fill="#fff" stroke="var(--sun-deep)" stroke-width="3"/><text x="0" y="5" text-anchor="middle" font-size="14">🛺</text></g>
+            <g transform="translate(178 74)"><circle r="13" fill="#fff" stroke="var(--melon)" stroke-width="3"/><text x="0" y="5" text-anchor="middle" font-size="14">🛺</text></g>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT'S MADE ============ -->
+<section class="band-ink">
+  <div class="wrap">
+    <span class="eyebrow">For the curious</span>
+    <h2 style="font-size:clamp(1.5rem,3vw,2rem);margin:.35em 0 .5em">How it's being made</h2>
+    <p class="madeby">A hand-built, family-only app — a real native app on both iPhone and Android. No ads, no data selling, no strangers. Built for us and nobody else, mostly as a fun excuse to learn some new things.</p>
+    <div class="made-grid">
+      <div class="m"><b>Flutter</b> · one codebase, both phones</div>
+      <div class="m"><b>Rust</b> · the brains behind the scenes</div>
+      <div class="m"><b>Local-first</b> · works even when the beach wifi doesn't</div>
+      <div class="m"><b>Push alerts</b> · so pings actually reach you</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="peanut-badge">🥜</span>
+    <p style="font-family:var(--font-display);font-weight:800;font-size:1.3rem;color:var(--cart-deep)">Goober</p>
+    <p>It's like Uber. For golf carts. For us. · Beach 2026</p>
+  </div>
+</footer>
+
+<script>
+  (function(){
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var els = document.querySelectorAll('.reveal');
+    if (reduce || !('IntersectionObserver' in window)){
+      els.forEach(function(e){ e.classList.add('in'); });
+      return;
+    }
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){
+        if(en.isIntersecting){ en.target.classList.add('in'); io.unobserve(en.target); }
+      });
+    }, { threshold:.12, rootMargin:'0px 0px -8% 0px' });
+    els.forEach(function(e){ io.observe(e); });
+  })();
+</script>

@@ -1,0 +1,76 @@
+# ─────────────────────────────────────────────
+#  Goober — combined Flutter + Rust gitignore
+# ─────────────────────────────────────────────
+
+# ===== General =====
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*~
+.idea/
+.vscode/
+*.iml
+.env
+.env.*
+!.env.example
+
+# ===== Flutter / Dart (app/) =====
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+**/doc/api/
+*.lock.bak
+coverage/
+# Keep pubspec.lock committed for app reproducibility (uncomment to ignore):
+# pubspec.lock
+
+# Flutter platform build artifacts
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/ios/Pods/
+**/ios/.symlinks/
+**/android/.gradle/
+**/android/captures/
+**/android/local.properties
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+GeneratedPluginRegistrant.java
+.cxx/
+
+# ===== Rust (server/) =====
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# SQLite databases (never commit real data)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ===== Secrets / signing (NEVER commit) =====
+# Apple / Codemagic
+*.p8
+*.p12
+*.mobileprovision
+*.cer
+*.certSigningRequest
+AuthKey_*.p8
+# Firebase / FCM
+google-services.json
+GoogleService-Info.plist
+firebase-service-account*.json
+# Fly.io
+fly.toml.local
