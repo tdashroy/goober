@@ -41,11 +41,15 @@ also a deliberate learning project (Flutter, Rust, local-first sync).
 
 ```
 goober/
-├── PRD.md          # spec + rationale (source of truth)
-├── pitch.html      # family pitch page (mockups)
+├── PRD.md              # spec + rationale (source of truth)
+├── pitch.html          # family pitch page (mockups)
 ├── README.md
-├── app/            # Flutter app    — see app/README.md
-└── server/         # Rust backend   — see server/README.md
+├── app/                # Flutter app    — see app/README.md
+├── server/             # Rust backend   — see server/README.md
+├── docker/             # container build files for the dev environment
+├── docker-compose.yml  # server + emulator + test stack
+├── Makefile            # convenience targets (base, up, test, …)
+└── docs/               # guides — e.g. docs/dev-container.md
 ```
 
 ## 🚀 Run the walking skeleton locally
@@ -62,6 +66,22 @@ cd app && flutter run     # talks to the server at http://10.0.2.2:8080
 
 Tests: `cargo test` in `server/`, `flutter test` in `app/` (both headless).
 Details in [`server/README.md`](./server/README.md) and [`app/README.md`](./app/README.md).
+
+### …or without installing the toolchain
+
+Prefer not to install Flutter/Android/Rust locally? A Docker setup builds, tests,
+and **runs** the whole stack. Builds, tests, and the server are fully headless;
+the Android emulator is opt-in and appears as a native window on your desktop:
+
+```sh
+make base && make up      # headless default stack: just the server
+make test                 # analyze + headless tests, no host toolchain
+make emulator             # opt-in: app on an emulator, as a native desktop window
+```
+
+Full guide: [`docs/dev-container.md`](./docs/dev-container.md). The default stack
+needs only Docker; the emulator additionally needs `/dev/kvm`, `/dev/dri`, and a
+local display.
 
 ## 🗺️ Status
 

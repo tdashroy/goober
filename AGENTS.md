@@ -35,3 +35,28 @@ in `server/README.md` and `app/README.md`.
 - **Local wiring:** server binds `0.0.0.0:8080`; the Android emulator reaches the
   host at `http://10.0.2.2:8080`. Cleartext HTTP is allowed in the debug manifest
   only (`app/android/app/src/debug/AndroidManifest.xml`).
+
+### Containerized dev environment
+
+No host Flutter/Android toolchain needed — `docker/` + `docker-compose.yml` run
+the whole stack. See `docs/dev-container.md`. Key points:
+
+- **Build order matters:** the build/test and emulator images `FROM
+  goober-base:latest`, so build the base first — `make base` (Compose does not
+  order `FROM` dependencies). `make up` runs the headless default stack (just the
+  server); `make emulator` is opt-in (behind the `emulator` compose profile) and
+  builds the app + launches the emulator as a native window on the host desktop;
+  `make test` is the CI-parity check. Builds and tests never need a display.
+- The Flutter SDK in the base image is pinned to a stable release *tag*
+  (`FLUTTER_VERSION`), chosen to satisfy `app/pubspec.yaml`'s Dart constraint.
+  Pin a tag, not a bare commit — a detached commit reports `0.0.0-unknown` and
+  pub rejects it against the SDK constraint.
+- **App→server hop inside the emulator:** the guest's `10.0.2.2` is the *emulator*
+  container, not the server, so the emulator container runs a `socat` bridge from
+  its `:8080` to `server:8080`. Don't expect Compose DNS names to resolve inside
+  the Android guest.
+- The emulator container is **privileged** with `/dev/kvm` and `/dev/dri` mapped
+  in and the host X socket (`/tmp/.X11-unix`) mounted; it runs with `DISPLAY=:0`
+  so its Qt window renders through the host X server as a native desktop window.
+  KVM gives CPU accel and `/dev/dri` gives hardware GL (`-gpu host`, falling back
+  to `swiftshader_indirect`). The host must `xhost +local:` once to allow it.
