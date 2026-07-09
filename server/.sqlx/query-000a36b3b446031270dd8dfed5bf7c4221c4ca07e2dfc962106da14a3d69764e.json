@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO members (id, group_id, phone, display_name, token, is_admin)\n        VALUES (?, ?, ?, ?, ?, 0)\n        ON CONFLICT (group_id, phone) DO UPDATE SET display_name = excluded.display_name\n        RETURNING id, token, is_admin\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "token",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "is_admin",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "000a36b3b446031270dd8dfed5bf7c4221c4ca07e2dfc962106da14a3d69764e"
+}
