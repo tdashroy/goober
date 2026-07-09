@@ -25,7 +25,7 @@ also a deliberate learning project (Flutter, Rust, local-first sync).
 
 ---
 
-## 🧱 Planned stack (see `PRD.md` §13)
+## 🧱 Planned stack
 
 | Layer | Choice |
 |---|---|
@@ -44,11 +44,28 @@ goober/
 ├── PRD.md          # spec + rationale (source of truth)
 ├── pitch.html      # family pitch page (mockups)
 ├── README.md
-├── app/            # Flutter app            (to be created)
-└── server/         # Rust backend           (to be created)
+├── app/            # Flutter app    — see app/README.md
+└── server/         # Rust backend   — see server/README.md
 ```
+
+## 🚀 Run the walking skeleton locally
+
+The first slice runs entirely on the dev machine — no cloud host.
+
+```sh
+# 1. Backend (Rust): serves on http://localhost:8080
+cd server && cargo run
+
+# 2. App (Flutter): boot an Android emulator, then
+cd app && flutter run     # talks to the server at http://10.0.2.2:8080
+```
+
+Tests: `cargo test` in `server/`, `flutter test` in `app/` (both headless).
+Details in [`server/README.md`](./server/README.md) and [`app/README.md`](./app/README.md).
 
 ## 🗺️ Status
 
-Design complete; implementation not yet started. Suggested build order is in `PRD.md` §15.
+**Walking skeleton built:** create/join a group, bearer-token auth,
+and the empty activity feed, running locally end to end. Rides, SSE, push,
+points, and cloud deploy come later. Suggested build order lives in the PRD.
 Next real deployment target: **July 4, 2027**.
