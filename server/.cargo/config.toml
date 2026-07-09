@@ -1,0 +1,8 @@
+# Build against the committed `.sqlx/` query cache so `cargo build`/`cargo test`
+# never require a live database (CI, the review gate, and fresh checkouts).
+#
+# To regenerate the cache after changing a query! macro, run against a real DB:
+#   DATABASE_URL="sqlite://$(pwd)/goober-dev.db" cargo sqlx prepare
+# (`cargo sqlx prepare` connects using DATABASE_URL directly, ignoring this flag.)
+[env]
+SQLX_OFFLINE = "true"

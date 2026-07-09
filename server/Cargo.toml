@@ -1,0 +1,31 @@
+[package]
+name = "goober-server"
+version = "0.1.0"
+edition = "2021"
+description = "Goober backend — axum + SQLite (sqlx). Walking skeleton: groups, join/auth, empty feed."
+publish = false
+
+[[bin]]
+name = "goober-server"
+path = "src/main.rs"
+
+[lib]
+name = "goober_server"
+path = "src/lib.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

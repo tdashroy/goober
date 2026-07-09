@@ -1,0 +1,66 @@
+# Goober server
+
+Rust backend for Goober — `axum` + SQLite via `sqlx`. This is the **walking
+skeleton**: create a group, join with name + phone, bearer-token auth,
+and an empty group feed. Runs **locally over HTTP** — cloud deployment over HTTPS
+comes later.
+
+## Endpoints
+
+| Method | Path                         | Auth   | Purpose |
+|--------|------------------------------|--------|---------|
+| GET    | `/health`                    | –      | Liveness check |
+| POST   | `/groups`                    | –      | Create a group; caller becomes its admin |
+| POST   | `/groups/{group_id}/join`    | –      | Join with name + phone; re-attaches by phone |
+| GET    | `/me`                        | bearer | The caller's identity |
+| GET    | `/groups/{group_id}/feed`    | bearer | Group activity feed (empty for now) |
+
+`POST /groups` and `/join` return `{ token, group_id, group_name, member }`. Send
+the token as `Authorization: Bearer <token>` on every authenticated request.
+
+**Identity:** the phone number is the durable identity key; the display
+name is a mutable label. Re-joining with the same phone re-attaches the same
+member (no duplicate) and returns their existing token — reinstall recovery for
+free. No passwords/email/SMS (family trust model).
+
+## Run it
+
+```sh
+cd server
+cp .env.example .env          # optional; defaults are fine for local dev
+DATABASE_URL="sqlite://goober-dev.db" GOOBER_BIND="0.0.0.0:8080" cargo run
+```
+
+The server creates the SQLite file and runs migrations on startup. Binding
+`0.0.0.0` lets the Android emulator reach it at `http://10.0.2.2:8080`.
+
+## Test
+
+```sh
+cargo test        # unit + integration tests, no live DB or server needed
+```
+
+Integration tests (`tests/api.rs`) drive the real `axum` router in-process against
+a fresh in-memory SQLite database — no network, no files.
+
+## sqlx offline cache
+
+Queries are compile-time checked with `sqlx::query!`. The `.sqlx/` directory holds
+the committed offline cache, and `.cargo/config.toml` sets `SQLX_OFFLINE=true`, so
+`cargo build`/`cargo test` never need a live database.
+
+**After changing any `query!` macro, regenerate the cache against a real DB:**
+
+```sh
+DATABASE_URL="sqlite://$(pwd)/goober-dev.db" cargo sqlx prepare
+```
+
+(Requires `sqlx-cli` built with the sqlite driver:
+`cargo install sqlx-cli --no-default-features --features sqlite,rustls`.)
+Commit the regenerated `.sqlx/` files.
+
+## Migrations
+
+Schema lives in `migrations/` and is applied via `sqlx migrate` (embedded in the
+binary and run on startup). The skeleton has just `groups` + `members`; rides,
+places, messages, etc. arrive later.
