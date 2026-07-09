@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO members (id, group_id, phone, display_name, token, is_admin)\n        VALUES (?, ?, ?, ?, ?, 1)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "d7024e8e7c80e23503a76798bbee0a7ea477c5887c32c45f6defcd36db7bbabf"
+}
