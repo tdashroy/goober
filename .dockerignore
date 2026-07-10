@@ -1,0 +1,17 @@
+# Keep build contexts small and reproducible: never ship host build output or
+# local databases into an image. Source is bind-mounted for the build/test and
+# apk-builder services, so these are only excluded from the copied contexts
+# (server image) and to speed up context transfer.
+.git
+**/target
+**/build
+**/.dart_tool
+**/.idea
+app/.flutter-plugins-dependencies
+**/*.iml
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+server/goober-dev.db
+.lavish

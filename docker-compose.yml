@@ -1,0 +1,110 @@
+name: goober
+
+# `docker compose up` brings up the headless default stack (just the server). The
+# Android emulator is opt-in behind the `emulator` profile — it draws a native
+# window on the host desktop, so it is never part of the display-less default.
+# Start it with `make emulator` (or `docker compose --profile emulator up`).
+# Build the shared base image first (`make base`, or the
+# `docker build -f docker/base.Dockerfile ...` it wraps) — the build/test and
+# emulator images derive from it.
+
+services:
+  # Rust axum + SQLite backend.
+  server:
+    build:
+      context: .
+      dockerfile: docker/server.Dockerfile
+    image: goober-server:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - server-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # Builds the debug APK into a shared volume, then exits; the emulator installs
+  # from it. Pointed at 10.0.2.2:8080 — the guest's alias for the emulator
+  # container, which forwards to the server (see docker/emulator-entrypoint.sh).
+  apk-builder:
+    build:
+      context: .
+      dockerfile: docker/build-test.Dockerfile
+    image: goober-build-test:latest
+    profiles: ["emulator"]
+    volumes:
+      - .:/workspace
+      - apk:/apk
+    # Clear any prior APK first so the emulator (which waits for the file to
+    # appear, not for this container to exit) never installs a stale build, and
+    # publish the fresh one via an atomic rename so it is only ever seen whole.
+    command: >
+      bash -lc "cd /workspace/app &&
+                mkdir -p /apk &&
+                rm -f /apk/app-debug.apk &&
+                flutter pub get &&
+                flutter build apk --debug --dart-define=GOOBER_API_BASE=http://10.0.2.2:8080 &&
+                cp build/app/outputs/flutter-apk/app-debug.apk /apk/app-debug.apk.tmp &&
+                mv /apk/app-debug.apk.tmp /apk/app-debug.apk &&
+                echo 'APK ready: /apk/app-debug.apk'"
+
+  # Long-running, hardware-accelerated Android emulator that renders its own GUI
+  # as a native window on the host desktop via the host X server. Opt-in only —
+  # it lives behind the `emulator` profile, so the default `docker compose up`
+  # (and any display-less machine) never starts it. Launch with `make emulator`.
+  emulator:
+    build:
+      context: .
+      dockerfile: docker/emulator.Dockerfile
+    image: goober-emulator:latest
+    profiles: ["emulator"]
+    privileged: true
+    devices:
+      - "/dev/kvm:/dev/kvm"   # CPU acceleration (KVM)
+      - "/dev/dri:/dev/dri"   # host GPU for hardware GL (-gpu host)
+    environment:
+      SERVER_HOST: server
+      SERVER_PORT: "8080"
+      APK_PATH: /apk/app-debug.apk
+      APP_ID: com.tdashroy.goober
+      # Draw the emulator window on the host desktop. The host must first allow
+      # the container to connect to its X server: `xhost +local:` (see
+      # docs/dev-container.md). EMULATOR_GPU falls back to swiftshader_indirect
+      # if hardware GL misbehaves.
+      DISPLAY: ${DISPLAY:-:0}
+      EMULATOR_GPU: ${EMULATOR_GPU:-host}
+    volumes:
+      - apk:/apk
+      - /tmp/.X11-unix:/tmp/.X11-unix   # host X server socket (native window)
+    # Gate only on the server being healthy. The emulator does NOT depend on
+    # apk-builder's exit state: it waits for the built APK to appear in the
+    # shared `apk` volume (see docker/emulator-entrypoint.sh) and installs that.
+    # A stale or failed prior build container therefore can never wedge a launch
+    # — Compose has no "must have completed successfully" edge that a leftover
+    # exited container could make permanently unsatisfiable.
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # CI-parity check: static analysis + headless tests, no host toolchain.
+  # Run on demand:  docker compose run --rm test
+  test:
+    build:
+      context: .
+      dockerfile: docker/build-test.Dockerfile
+    image: goober-build-test:latest
+    profiles: ["test"]
+    volumes:
+      - .:/workspace
+    command: >
+      bash -lc "cd /workspace/app &&
+                flutter pub get &&
+                flutter analyze &&
+                flutter test"
+
+volumes:
+  server-data:
+  apk:
