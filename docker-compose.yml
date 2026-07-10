@@ -38,6 +38,16 @@ services:
     volumes:
       - .:/workspace
       - apk:/apk
+      # Persist the expensive, reusable build caches across container teardown
+      # (`make down`) and fresh machines. Without these, the first `flutter build
+      # apk` in a new container reinstalls the Android NDK/CMake (~2-3 min) and
+      # re-fetches every Gradle/pub dependency; with them a fresh container reuses
+      # the volumes and does the ~20s incremental build. Mounted at the specific
+      # cache subdirs so they never shadow the SDK pieces baked into the base image.
+      - android-ndk:/opt/android-sdk/ndk
+      - android-cmake:/opt/android-sdk/cmake
+      - gradle-cache:/home/dev/.gradle
+      - pub-cache:/opt/pub-cache
     # Clear any prior APK first so the emulator (which waits for the file to
     # appear, not for this container to exit) never installs a stale build, and
     # publish the fresh one via an atomic rename so it is only ever seen whole.
@@ -99,6 +109,12 @@ services:
     profiles: ["test"]
     volumes:
       - .:/workspace
+      # Same persisted caches as apk-builder (shared image) so tests reuse the
+      # Gradle/pub caches too and stay fast across fresh containers.
+      - android-ndk:/opt/android-sdk/ndk
+      - android-cmake:/opt/android-sdk/cmake
+      - gradle-cache:/home/dev/.gradle
+      - pub-cache:/opt/pub-cache
     command: >
       bash -lc "cd /workspace/app &&
                 flutter pub get &&
@@ -108,3 +124,9 @@ services:
 volumes:
   server-data:
   apk:
+  # Persisted build caches (see apk-builder). Survive `make down`; cleared by
+  # `make clean` (down -v) like the others.
+  android-ndk:
+  android-cmake:
+  gradle-cache:
+  pub-cache:

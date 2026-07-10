@@ -26,6 +26,35 @@ with `docker compose up` untouched.
 All four share one **base image** (`docker/base.Dockerfile`) that holds the
 Flutter SDK, Android SDK, and JDK 17, so the toolchain is installed once.
 
+### Persisted build caches
+
+The first `flutter build apk` in a build/test container installs the Android
+**NDK** and **CMake** (auto-downloaded into `$ANDROID_SDK_ROOT/{ndk,cmake}`, ~2-3
+min) and fills the **Gradle** and **pub** caches. Those live in the container
+filesystem, so without help a fresh container — after `make down`, on a new build
+image, or a new machine — reinstalls them every time.
+
+To avoid that, the `apk-builder` and `test` services mount four named volumes at
+the specific cache directories, so a fresh container reuses them and does the fast
+incremental build instead:
+
+| Volume | Mount | Holds |
+|---|---|---|
+| `android-ndk` | `$ANDROID_SDK_ROOT/ndk` | auto-installed Android NDK |
+| `android-cmake` | `$ANDROID_SDK_ROOT/cmake` | auto-installed CMake |
+| `gradle-cache` | `/home/dev/.gradle` | Gradle build cache + deps |
+| `pub-cache` | `$PUB_CACHE` (`/opt/pub-cache`) | Dart/Flutter packages |
+
+Measured effect: a cold APK build on empty volumes ~**200s** (NDK installs once),
+then a fresh container reusing the volumes ~**40s** with no NDK reinstall.
+
+Two details make this safe: the volumes mount at the specific cache *subdirs* so
+they never shadow the platform-tools/platforms/build-tools baked into the base
+image's `$ANDROID_SDK_ROOT`; and the mount points are pre-created owned by the
+unprivileged `dev` user in `docker/build-test.Dockerfile`, so a fresh (otherwise
+root-owned) volume is seeded writable by the build user. The caches survive `make
+down` and are cleared by `make clean`.
+
 ## Host requirements
 
 - **Docker** with the Compose plugin (tested on Docker 27.4 / Compose v2.32).
@@ -157,7 +186,7 @@ make emulator      # server + APK build + emulator as a native window
 make test          # analyze + headless tests
 make logs          # follow logs
 make down          # stop the stack
-make clean         # stop and remove volumes (APK + server DB)
+make clean         # stop and remove volumes (APK, server DB, build caches)
 ```
 
 Docker output is **plain and append-only by default** (no in-place redraw), so
