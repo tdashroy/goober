@@ -49,6 +49,50 @@ class Session {
   );
 }
 
+/// A curated place: a named house or landmark with map coordinates. Only a
+/// group's admin can create/rename/delete places; any member can view them.
+class Place {
+  const Place({
+    required this.id,
+    required this.groupId,
+    required this.name,
+    required this.lat,
+    required this.lng,
+  });
+
+  final String id;
+  final String groupId;
+  final String name;
+  final double lat;
+  final double lng;
+
+  factory Place.fromJson(Map<String, dynamic> json) => Place(
+    id: json['id'] as String,
+    groupId: json['group_id'] as String,
+    name: json['name'] as String,
+    lat: (json['lat'] as num).toDouble(),
+    lng: (json['lng'] as num).toDouble(),
+  );
+}
+
+/// The group's curated places. The server returns this on read and echoes it
+/// back after every mutation so the client refreshes from one response.
+class Places {
+  const Places({required this.groupId, required this.places});
+
+  final String groupId;
+  final List<Place> places;
+
+  bool get isEmpty => places.isEmpty;
+
+  factory Places.fromJson(Map<String, dynamic> json) => Places(
+    groupId: json['group_id'] as String,
+    places: ((json['places'] as List<dynamic>?) ?? const [])
+        .map((p) => Place.fromJson(p as Map<String, dynamic>))
+        .toList(),
+  );
+}
+
 /// The group activity feed. `rides` is empty in the walking skeleton.
 class Feed {
   const Feed({

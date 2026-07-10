@@ -77,8 +77,87 @@ class ApiClient {
     return Feed.fromJson(_decode(resp));
   }
 
+  /// Fetch the group's curated places. Any member may read; requires [token].
+  Future<Places> fetchPlaces({
+    required String groupId,
+    required String token,
+  }) async {
+    final resp = await _client.get(
+      Uri.parse('$baseUrl/groups/$groupId/places'),
+      headers: _authHeaders(token),
+    );
+    return Places.fromJson(_decode(resp));
+  }
+
+  /// Create a place. Admin only (the server rejects non-admins). Returns the
+  /// group's full, updated place list.
+  Future<Places> createPlace({
+    required String groupId,
+    required String token,
+    required String name,
+    required double lat,
+    required double lng,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/groups/$groupId/places'),
+      headers: _jsonAuthHeaders(token),
+      body: jsonEncode({'name': name, 'lat': lat, 'lng': lng}),
+    );
+    return Places.fromJson(_decode(resp));
+  }
+
+  /// Rename and/or move a place. Admin only. Returns the updated place list.
+  Future<Places> updatePlace({
+    required String groupId,
+    required String token,
+    required String placeId,
+    required String name,
+    required double lat,
+    required double lng,
+  }) async {
+    final resp = await _client.put(
+      Uri.parse('$baseUrl/groups/$groupId/places/$placeId'),
+      headers: _jsonAuthHeaders(token),
+      body: jsonEncode({'name': name, 'lat': lat, 'lng': lng}),
+    );
+    return Places.fromJson(_decode(resp));
+  }
+
+  /// Delete a place. Admin only. Returns the updated place list.
+  Future<Places> deletePlace({
+    required String groupId,
+    required String token,
+    required String placeId,
+  }) async {
+    final resp = await _client.delete(
+      Uri.parse('$baseUrl/groups/$groupId/places/$placeId'),
+      headers: _authHeaders(token),
+    );
+    return Places.fromJson(_decode(resp));
+  }
+
+  /// Seed this group's places from another group's list (the "copy last year's
+  /// places" starting point). Admin only. Returns the updated place list.
+  Future<Places> copyPlaces({
+    required String groupId,
+    required String token,
+    required String fromGroupId,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/groups/$groupId/places/copy'),
+      headers: _jsonAuthHeaders(token),
+      body: jsonEncode({'from_group_id': fromGroupId}),
+    );
+    return Places.fromJson(_decode(resp));
+  }
+
   Map<String, String> _authHeaders(String token) => {
     'Authorization': 'Bearer $token',
+  };
+
+  Map<String, String> _jsonAuthHeaders(String token) => {
+    'Authorization': 'Bearer $token',
+    'Content-Type': 'application/json',
   };
 
   /// Decode a JSON response, converting non-2xx into an [ApiException].
