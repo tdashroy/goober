@@ -6,7 +6,23 @@ FROM goober-base:latest
 # APK handoff mount point, owned by the unprivileged user. A fresh named volume
 # mounted here inherits this ownership, so the build can write the APK to the
 # volume the emulator reads from.
-RUN mkdir -p /apk && chown dev:dev /apk
+#
+# The same trick pre-creates the persisted-cache mount points owned by `dev`.
+# When Docker first mounts an *empty* named volume over a path that exists in the
+# image, it seeds the volume from that path and carries its ownership across — so
+# a fresh (otherwise root-owned) volume lands writable by the unprivileged build
+# user. These hold the expensive, reusable artifacts a `flutter build apk` would
+# otherwise reinstall from scratch on every fresh container:
+#   - $ANDROID_SDK_ROOT/ndk, $ANDROID_SDK_ROOT/cmake — the Android NDK + CMake,
+#     auto-installed on the first APK build (~2-3 min). Mounted at these specific
+#     subdirs so the volumes never shadow the platform-tools/platforms/build-tools
+#     already baked into the base image's $ANDROID_SDK_ROOT.
+#   - /home/dev/.gradle — the Gradle build cache and downloaded dependencies.
+#   - $PUB_CACHE — Dart/Flutter package cache.
+RUN mkdir -p /apk "${ANDROID_SDK_ROOT}/ndk" "${ANDROID_SDK_ROOT}/cmake" \
+             /home/dev/.gradle "${PUB_CACHE}" \
+    && chown dev:dev /apk "${ANDROID_SDK_ROOT}/ndk" "${ANDROID_SDK_ROOT}/cmake" \
+             /home/dev/.gradle "${PUB_CACHE}"
 
 # Run as the unprivileged user; no root, no device access.
 USER dev

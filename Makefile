@@ -45,7 +45,8 @@ down:
 logs:
 	docker compose $(COMPOSE_ANSI) logs -f
 
-# Stop and remove volumes (APK, server database). Profile-aware like `down` so
-# the emulator-profile containers and their volumes go too.
+# Stop and remove volumes (APK, server database, persisted build caches).
+# Profile-aware like `down` so the emulator-profile containers and their volumes
+# go too. Note this drops the NDK/Gradle/pub caches, so the next build is cold.
 clean:
 	docker compose $(COMPOSE_ANSI) --profile emulator down -v --remove-orphans
