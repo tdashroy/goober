@@ -14,7 +14,7 @@ pub mod error;
 pub mod models;
 pub mod routes;
 
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 use sqlx::SqlitePool;
 
@@ -26,6 +26,15 @@ pub fn build_app(pool: SqlitePool) -> Router {
         .route("/groups", post(routes::create_group))
         .route("/groups/{group_id}/join", post(routes::join_group))
         .route("/groups/{group_id}/feed", get(routes::feed))
+        .route(
+            "/groups/{group_id}/places",
+            get(routes::list_places).post(routes::create_place),
+        )
+        .route("/groups/{group_id}/places/copy", post(routes::copy_places))
+        .route(
+            "/groups/{group_id}/places/{place_id}",
+            put(routes::update_place).delete(routes::delete_place),
+        )
         .route("/me", get(routes::me))
         .with_state(pool)
 }
