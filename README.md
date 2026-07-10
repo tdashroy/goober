@@ -66,6 +66,7 @@ Details in [`server/README.md`](./server/README.md) and [`app/README.md`](./app/
 ## 🗺️ Status
 
 **Walking skeleton built:** create/join a group, bearer-token auth,
-and the empty activity feed, running locally end to end. Rides, SSE, push,
-points, and cloud deploy come later. Suggested build order lives in the PRD.
+the empty activity feed, and admin-curated group places (any member views the
+list; the admin adds, edits, deletes, or copies from another group), running
+locally end to end. Rides, SSE, push, points, and cloud deploy come later. Suggested build order lives in the PRD.
 Next real deployment target: **July 4, 2027**.
