@@ -17,6 +17,7 @@ needs one.
 | Static analysis + headless tests | `test` | `docker compose run --rm test` | No |
 | Debug APK build (feeds the emulator) | `apk-builder` | runs on `make emulator`, then exits | No |
 | Android emulator with the app installed | `emulator` | native window on your desktop | **Yes** |
+| Interactive Flutter hot-reload loop | `dev` | `make dev` (attaches to a running emulator) | via the emulator |
 
 The `server` and `test` pieces are the **default, headless stack**. The
 `apk-builder` and `emulator` pieces are **opt-in** behind the `emulator` compose
@@ -153,6 +154,80 @@ EMULATOR_GPU=swiftshader_indirect make emulator
 The entrypoint logs the chosen backend and, at startup, whether it can reach your
 X server and what GL renderer `/dev/dri` provides.
 
+## Hot-reload dev loop (`make dev`)
+
+`make emulator` is the clean-boot path: it builds a fresh debug APK, installs it,
+and launches the app. Great for a first run, but a full rebuild+reinstall on every
+code change is slow. Once the emulator is up, `make dev` gives you Flutter's fast
+inner loop instead — an interactive `flutter run` **attached to the running
+emulator**, so a code change reloads in well under a second with app state
+preserved.
+
+```sh
+make emulator      # in one terminal: server + APK build + emulator window (keep running)
+make dev           # in another: drops you into `flutter run` on that emulator
+```
+
+`make dev` drops you straight into the `flutter run` session. Its key commands:
+
+| Key | Action |
+|---|---|
+| `r` | **Hot reload** — recompile changed code and rebuild the widget tree, keeping app state. |
+| `R` | **Hot restart** — restart the app from `main()` (drops state); use when a change can't hot-reload (e.g. `main`, global state, native code). |
+| `q` | **Quit** — stop `flutter run` and terminate the app on the device. |
+
+Edit a Dart file under `app/lib/`, switch to the `make dev` terminal, press `r`,
+and the change appears on the emulator. A full `flutter build apk` is **not** run —
+only the changed libraries are recompiled and sent, e.g.:
+
+```
+Performing hot reload...
+Reloaded 1 of 902 libraries in 550ms (compile: 42 ms, reload: 231 ms, reassemble: 173 ms).
+```
+
+The app reaches the server exactly as under `make emulator`: `flutter run` builds
+with `--dart-define=GOOBER_API_BASE=http://10.0.2.2:8080`, and the emulator
+container's `socat` bridge forwards `10.0.2.2:8080 → server:8080`.
+
+### How `make dev` reaches the emulator
+
+`flutter run` runs in the **build/test image** — no Flutter on the host — but it
+needs to (a) see the emulator as an adb device, (b) install/launch the app, and
+(c) connect to the app's **Dart VM service** over an adb port-forward to drive hot
+reload. The emulator runs in a *different* container with its own adb server, so
+the naive setup would leave the VM-service forward on the emulator container's
+loopback where `flutter run` can't reach it.
+
+The `dev` service sidesteps all of that by **joining the emulator container's
+network namespace** (`network_mode: "service:emulator"` in `docker-compose.yml`).
+The two containers then share one loopback, so the emulator's adb server
+(`127.0.0.1:5037`), the adb `forward` ports `flutter run` allocates, and the Dart
+VM service it connects to are all on the same `127.0.0.1` — `flutter run
+-d emulator-5554` just works, with no adb-over-TCP bridging or shared-adb-server
+port plumbing. Verify from inside the loop's container that a device is present:
+`adb devices` lists `emulator-5554`.
+
+Because it attaches to the *running* emulator, `make dev` requires `make emulator`
+to be up first; if no emulator is running there is no netns to join and the
+command errors out — start `make emulator` and retry.
+
+### Auto-reload on save, and why the loop is manual
+
+The loop is **press-`r`**, by design and by two independent constraints:
+
+1. The `flutter run` **CLI has no watch/poll mode** — it does not reload on save in
+   any environment; reload-on-save is an IDE-integration feature, not a CLI flag
+   (`flutter run --help` has no `--watch`/`--poll`). The CLI's programmatic
+   equivalents are `--pid-file` + `SIGUSR1` (reload) / `SIGUSR2` (restart).
+2. Even an IDE watcher would not help here: on Linux, **inotify file-change events
+   do not cross the host→container bind mount**, so a save on the host is invisible
+   to a watcher inside the container. (A watcher running *inside* the container, or
+   one using CPU-heavy **polling** instead of inotify, would see it — but that
+   burns CPU continuously and buys nothing over pressing `r`.)
+
+So: edit on the host, press `r` in the `make dev` terminal. Manual reload works
+regardless of the bind-mount limitation, which is exactly why it's the loop.
+
 ## Run the tests (no host Flutter, no display)
 
 ```sh
@@ -183,6 +258,7 @@ make this explicit (it is also the compiled-in default).
 make base          # (re)build the shared toolchain image
 make up            # headless default stack: server only
 make emulator      # server + APK build + emulator as a native window
+make dev           # interactive flutter run hot-reload loop on a running emulator
 make test          # analyze + headless tests
 make logs          # follow logs
 make down          # stop the stack
