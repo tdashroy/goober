@@ -16,6 +16,13 @@ The five canonical triage roles map 1:1 to identically-named GitHub labels (`nee
 
 Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (created lazily; `PRD.md` is the interim glossary). See `docs/agents/domain.md`.
 
+## Conventions
+
+- **No references to issues, the PRD, or the tracker in code, comments, or commit
+  messages.** Describe *what* the code does and *why* in place — the output must
+  stand on its own. Read the issue/PRD for context, but don't cite issue numbers,
+  "the PRD", or tracker labels in committed artifacts.
+
 ## Development
 
 Monorepo: `server/` (Rust: axum + SQLite via sqlx) and `app/` (Flutter). Both run
