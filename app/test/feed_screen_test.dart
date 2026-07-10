@@ -81,4 +81,24 @@ void main() {
 
     expect(find.textContaining('coming soon'), findsOneWidget);
   });
+
+  testWidgets('the Places button opens the places screen', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildGooberTheme(),
+        home: FeedScreen(
+          api: _emptyFeedApi(),
+          session: _session(),
+          onUnauthenticated: () {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('open-places-button')));
+    await tester.pumpAndSettle();
+
+    // Landed on the Places screen (app bar title).
+    expect(find.text('Places'), findsOneWidget);
+  });
 }

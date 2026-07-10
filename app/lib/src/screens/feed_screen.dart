@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
+import 'places_screen.dart';
 
 /// The front door: the group's live activity feed with a big
 /// "Get a ride" button on top.
@@ -65,6 +66,24 @@ class _FeedScreenState extends State<FeedScreen> {
               ? 'Goober'
               : widget.session.groupName,
         ),
+        actions: [
+          IconButton(
+            key: const Key('open-places-button'),
+            icon: const Icon(Icons.place),
+            tooltip: 'Places',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => PlacesScreen(
+                    api: widget.api,
+                    session: widget.session,
+                    onUnauthenticated: widget.onUnauthenticated,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
