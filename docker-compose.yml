@@ -99,6 +99,45 @@ services:
       server:
         condition: service_healthy
 
+  # Interactive Flutter hot-reload loop, layered on top of a running emulator
+  # (`make emulator`). Runs `flutter run` in the build/test image — but JOINS THE
+  # EMULATOR CONTAINER'S NETWORK NAMESPACE (`network_mode: service:emulator`)
+  # instead of the shared Compose network. That is the whole trick: the emulator's
+  # adb server (127.0.0.1:5037), the adb port-forwards `flutter run` creates, and
+  # the Dart VM service it then connects to all live on one shared loopback, so
+  # `flutter run -d emulator-5554` reaches the device and hot reload attaches with
+  # no cross-container adb/port plumbing. Opt-in via the `dev` profile so it never
+  # starts with the default stack; run it interactively (the `emulator` profile is
+  # also enabled so this service's network_mode target is defined, and `--no-deps`
+  # attaches to the running emulator without restarting the stack):
+  #   docker compose --profile emulator --profile dev run --rm --no-deps dev
+  #   (== make dev)
+  # File-save events do NOT cross the host→container bind mount on Linux, and the
+  # `flutter run` CLI has no watch/poll mode anyway, so the loop is manual: press
+  # `r` to hot-reload, `R` to hot-restart, `q` to quit. The app reaches the server
+  # exactly as in the normal flow (GOOBER_API_BASE -> 10.0.2.2:8080 -> socat).
+  dev:
+    image: goober-build-test:latest
+    profiles: ["dev"]
+    network_mode: "service:emulator"
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/workspace
+      # Same persisted caches as apk-builder/test (shared image) so the first
+      # `flutter run` reuses the Gradle/pub caches and does a fast incremental build.
+      - android-ndk:/opt/android-sdk/ndk
+      - android-cmake:/opt/android-sdk/cmake
+      - gradle-cache:/home/dev/.gradle
+      - pub-cache:/opt/pub-cache
+    command: >
+      bash -lc "cd /workspace/app &&
+                flutter pub get &&
+                adb wait-for-device &&
+                exec flutter run -d emulator-5554
+                     --dart-define=GOOBER_API_BASE=http://10.0.2.2:8080
+                     ${FLUTTER_RUN_ARGS:-}"
+
   # CI-parity check: static analysis + headless tests, no host toolchain.
   # Run on demand:  docker compose run --rm test
   test:

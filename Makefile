@@ -1,7 +1,7 @@
 # Convenience targets for the containerized dev environment.
 # See docs/dev-container.md for the full guide.
 
-.PHONY: base up emulator test down logs clean
+.PHONY: base up emulator dev test down logs clean
 
 # Docker's default progress display redraws lines in place: BuildKit animates
 # build steps and Compose repaints a live status table. That flickers in the
@@ -30,6 +30,19 @@ up: base
 # `xhost +local:` once on the host first (see docs/dev-container.md).
 emulator: base
 	docker compose $(COMPOSE_ANSI) --profile emulator up --build
+
+# Interactive Flutter hot-reload loop against an already-running emulator (start
+# it first with `make emulator`). Drops you straight into `flutter run` attached
+# to the emulator: press `r` to hot-reload, `R` to hot-restart, `q` to quit. The
+# `dev` container joins the emulator container's network namespace so adb and the
+# Dart VM service share one loopback — see docs/dev-container.md. Pass extra
+# flutter args with FLUTTER_RUN_ARGS (e.g. `FLUTTER_RUN_ARGS=--verbose make dev`).
+# Both profiles are enabled so the `emulator` service the `dev` container attaches
+# its network namespace to is defined in the project; `--no-deps` then keeps
+# `make dev` from (re)starting that stack — it only attaches to the emulator that
+# `make emulator` already brought up.
+dev:
+	docker compose $(COMPOSE_ANSI) --profile emulator --profile dev run --rm --no-deps dev
 
 # CI-parity check: static analysis + headless tests, no host toolchain.
 test: base
