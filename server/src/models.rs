@@ -1,7 +1,8 @@
 //! Domain rows and the JSON shapes the API speaks.
 //!
 //! A **Group** is one trip/leaderboard/trophy cycle, a **Member** is a person
-//! in a group keyed by their phone number.
+//! in a group keyed by their phone number, and a **Place** is one of the group's
+//! curated named locations (a house or landmark) with map coordinates.
 
 use serde::{Deserialize, Serialize};
 
@@ -79,4 +80,66 @@ pub struct FeedResponse {
     pub group_id: String,
     pub group_name: String,
     pub rides: Vec<serde_json::Value>,
+}
+
+// ----- places -----
+
+/// A place row as stored in SQLite. Belongs to exactly one group.
+#[derive(Debug, Clone)]
+pub struct Place {
+    pub id: String,
+    pub group_id: String,
+    pub name: String,
+    pub lat: f64,
+    pub lng: f64,
+}
+
+/// Public view of a place — the JSON shape returned to clients.
+#[derive(Debug, Serialize)]
+pub struct PlaceView {
+    pub id: String,
+    pub group_id: String,
+    pub name: String,
+    pub lat: f64,
+    pub lng: f64,
+}
+
+impl From<&Place> for PlaceView {
+    fn from(p: &Place) -> Self {
+        PlaceView {
+            id: p.id.clone(),
+            group_id: p.group_id.clone(),
+            name: p.name.clone(),
+            lat: p.lat,
+            lng: p.lng,
+        }
+    }
+}
+
+/// Create or move-and-rename a place. Used by both create and update: a create
+/// takes all three, an update replaces the name and coordinates wholesale (the
+/// admin can rename and/or drop the pin somewhere new in one edit).
+#[derive(Debug, Deserialize)]
+pub struct PlaceRequest {
+    pub name: String,
+    pub lat: f64,
+    pub lng: f64,
+}
+
+/// Seed a group's places from another group's list — the "copy last year's
+/// places" starting point, so the admin curates by editing rather than
+/// re-entering everything. Thin version: copies every place from the source
+/// group verbatim (new ids), leaving the source untouched.
+#[derive(Debug, Deserialize)]
+pub struct CopyPlacesRequest {
+    /// The group to copy places from (e.g. last year's trip).
+    pub from_group_id: String,
+}
+
+/// The group's curated places. Returned to any member, and echoed back after a
+/// mutation so the client can refresh its list from a single response.
+#[derive(Debug, Serialize)]
+pub struct PlacesResponse {
+    pub group_id: String,
+    pub places: Vec<PlaceView>,
 }

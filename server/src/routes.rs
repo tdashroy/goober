@@ -9,7 +9,8 @@ use uuid::Uuid;
 use crate::auth::{generate_token, CurrentMember};
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    AuthResponse, CreateGroupRequest, FeedResponse, JoinGroupRequest, Member, MemberView,
+    AuthResponse, CopyPlacesRequest, CreateGroupRequest, FeedResponse, JoinGroupRequest, Member,
+    MemberView, Place, PlaceRequest, PlaceView, PlacesResponse,
 };
 
 /// Liveness check — a client can ping this to confirm it can reach the server.
@@ -175,6 +176,225 @@ pub async fn feed(
         group_name: group.name,
         rides: Vec::new(),
     }))
+}
+
+// ----- places -----
+
+/// `GET /groups/{group_id}/places` — the group's curated places.
+///
+/// Any member of the group may read; a token for another group is forbidden.
+pub async fn list_places(
+    State(pool): State<SqlitePool>,
+    CurrentMember(member): CurrentMember,
+    Path(group_id): Path<String>,
+) -> AppResult<Json<PlacesResponse>> {
+    require_group_member(&member, &group_id)?;
+    Ok(Json(places_response(&pool, &group_id).await?))
+}
+
+/// `POST /groups/{group_id}/places` — create a place. Admin only.
+pub async fn create_place(
+    State(pool): State<SqlitePool>,
+    CurrentMember(member): CurrentMember,
+    Path(group_id): Path<String>,
+    Json(req): Json<PlaceRequest>,
+) -> AppResult<Json<PlacesResponse>> {
+    require_group_admin(&member, &group_id)?;
+    let name = require_field(&req.name, "name")?;
+    let (lat, lng) = validate_coords(req.lat, req.lng)?;
+
+    let id = Uuid::new_v4().to_string();
+    sqlx::query!(
+        "INSERT INTO places (id, group_id, name, lat, lng) VALUES (?, ?, ?, ?, ?)",
+        id,
+        group_id,
+        name,
+        lat,
+        lng,
+    )
+    .execute(&pool)
+    .await?;
+
+    Ok(Json(places_response(&pool, &group_id).await?))
+}
+
+/// `PUT /groups/{group_id}/places/{place_id}` — rename and/or move a place.
+/// Admin only. Replaces the name and coordinates wholesale.
+pub async fn update_place(
+    State(pool): State<SqlitePool>,
+    CurrentMember(member): CurrentMember,
+    Path((group_id, place_id)): Path<(String, String)>,
+    Json(req): Json<PlaceRequest>,
+) -> AppResult<Json<PlacesResponse>> {
+    require_group_admin(&member, &group_id)?;
+    let name = require_field(&req.name, "name")?;
+    let (lat, lng) = validate_coords(req.lat, req.lng)?;
+
+    // Scope the update by group_id too: an admin can only touch places in their
+    // own group, and a stale/foreign place_id yields a clean 404 rather than
+    // silently updating nothing.
+    let affected = sqlx::query!(
+        "UPDATE places SET name = ?, lat = ?, lng = ? WHERE id = ? AND group_id = ?",
+        name,
+        lat,
+        lng,
+        place_id,
+        group_id,
+    )
+    .execute(&pool)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound("place"));
+    }
+
+    Ok(Json(places_response(&pool, &group_id).await?))
+}
+
+/// `DELETE /groups/{group_id}/places/{place_id}` — delete a place. Admin only.
+pub async fn delete_place(
+    State(pool): State<SqlitePool>,
+    CurrentMember(member): CurrentMember,
+    Path((group_id, place_id)): Path<(String, String)>,
+) -> AppResult<Json<PlacesResponse>> {
+    require_group_admin(&member, &group_id)?;
+
+    let affected = sqlx::query!(
+        "DELETE FROM places WHERE id = ? AND group_id = ?",
+        place_id,
+        group_id,
+    )
+    .execute(&pool)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound("place"));
+    }
+
+    Ok(Json(places_response(&pool, &group_id).await?))
+}
+
+/// `POST /groups/{group_id}/places/copy` — seed this group's places from another
+/// group's list (the "copy last year's places" starting point). Admin only.
+///
+/// Thin version: copies every place from the source group verbatim under fresh
+/// ids, leaving the source untouched, so the admin curates by editing. It
+/// appends rather than replacing — the group keeps any places it already has.
+pub async fn copy_places(
+    State(pool): State<SqlitePool>,
+    CurrentMember(member): CurrentMember,
+    Path(group_id): Path<String>,
+    Json(req): Json<CopyPlacesRequest>,
+) -> AppResult<Json<PlacesResponse>> {
+    require_group_admin(&member, &group_id)?;
+
+    let from_group_id = require_field(&req.from_group_id, "from_group_id")?;
+
+    sqlx::query!("SELECT id FROM groups WHERE id = ?", from_group_id)
+        .fetch_optional(&pool)
+        .await?
+        .ok_or(AppError::NotFound("group"))?;
+
+    sqlx::query!(
+        "SELECT id FROM members WHERE group_id = ? AND phone = ?",
+        from_group_id,
+        member.phone,
+    )
+    .fetch_optional(&pool)
+    .await?
+    .ok_or(AppError::Forbidden)?;
+
+    let source = load_places(&pool, &from_group_id).await?;
+    if source.is_empty() {
+        return Err(AppError::NotFound("places"));
+    }
+
+    // One transaction so a copy either lands whole or not at all.
+    let mut tx = pool.begin().await?;
+    for place in &source {
+        let id = Uuid::new_v4().to_string();
+        sqlx::query!(
+            "INSERT INTO places (id, group_id, name, lat, lng) VALUES (?, ?, ?, ?, ?)",
+            id,
+            group_id,
+            place.name,
+            place.lat,
+            place.lng,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    Ok(Json(places_response(&pool, &group_id).await?))
+}
+
+/// Fetch a group's places ordered by name — the shared read used by both the
+/// list endpoint and the copy source.
+async fn load_places(pool: &SqlitePool, group_id: &str) -> AppResult<Vec<Place>> {
+    let rows = sqlx::query!(
+        "SELECT id, group_id, name, lat, lng FROM places WHERE group_id = ? ORDER BY name",
+        group_id,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| Place {
+            id: r.id,
+            group_id: r.group_id,
+            name: r.name,
+            lat: r.lat,
+            lng: r.lng,
+        })
+        .collect())
+}
+
+/// Build the `PlacesResponse` a group's members see and every mutation echoes.
+async fn places_response(pool: &SqlitePool, group_id: &str) -> AppResult<PlacesResponse> {
+    let places = load_places(pool, group_id).await?;
+    Ok(PlacesResponse {
+        group_id: group_id.to_string(),
+        places: places.iter().map(PlaceView::from).collect(),
+    })
+}
+
+/// Require that the caller belongs to the group they're addressing. A token for
+/// a different group is forbidden, not merely unauthorized.
+fn require_group_member(member: &Member, group_id: &str) -> AppResult<()> {
+    if member.group_id != group_id {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
+/// Require that the caller is the group's admin. Non-admins (and members of
+/// other groups) are forbidden — this is the server-side guard that keeps place
+/// curation admin-only.
+fn require_group_admin(member: &Member, group_id: &str) -> AppResult<()> {
+    require_group_member(member, group_id)?;
+    if !member.is_admin {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
+/// Validate map coordinates: latitude in [-90, 90], longitude in [-180, 180].
+fn validate_coords(lat: f64, lng: f64) -> AppResult<(f64, f64)> {
+    if !lat.is_finite() || !(-90.0..=90.0).contains(&lat) {
+        return Err(AppError::BadRequest(
+            "lat must be between -90 and 90".to_string(),
+        ));
+    }
+    if !lng.is_finite() || !(-180.0..=180.0).contains(&lng) {
+        return Err(AppError::BadRequest(
+            "lng must be between -180 and 180".to_string(),
+        ));
+    }
+    Ok((lat, lng))
 }
 
 /// Trim a required text field, erroring if it is empty.

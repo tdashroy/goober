@@ -14,9 +14,21 @@ comes later.
 | POST   | `/groups/{group_id}/join`    | –      | Join with name + phone; re-attaches by phone |
 | GET    | `/me`                        | bearer | The caller's identity |
 | GET    | `/groups/{group_id}/feed`    | bearer | Group activity feed (empty for now) |
+| GET    | `/groups/{group_id}/places`  | bearer | The group's curated places (any member) |
+| POST   | `/groups/{group_id}/places`  | admin  | Create a place (`name`, `lat`, `lng`) |
+| PUT    | `/groups/{group_id}/places/{place_id}` | admin | Rename / move a place |
+| DELETE | `/groups/{group_id}/places/{place_id}` | admin | Delete a place |
+| POST   | `/groups/{group_id}/places/copy` | admin | Copy places in from another group (`from_group_id`) |
 
 `POST /groups` and `/join` return `{ token, group_id, group_name, member }`. Send
 the token as `Authorization: Bearer <token>` on every authenticated request.
+
+**Places:** a group's curated named locations (houses + landmarks) with map
+coordinates. Any member may read them; only the group's admin may create, rename,
+delete, or copy — enforced server-side (non-admin mutations are rejected).
+Places are scoped to their group. The read and every mutation return the group's
+full current list as `{ group_id, places: [{ id, group_id, name, lat, lng }] }`
+so a client refreshes from one response.
 
 **Identity:** the phone number is the durable identity key; the display
 name is a mutable label. Re-joining with the same phone re-attaches the same

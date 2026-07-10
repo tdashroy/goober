@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE places SET name = ?, lat = ?, lng = ? WHERE id = ? AND group_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "8b8811c08faba62403b47b9ccfd2d50574803b67f71f249539a4045578c3079a"
+}
