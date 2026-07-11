@@ -5,6 +5,16 @@ import 'package:goober/src/api_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+/// A response shaped like the server's: UTF-8 bytes under a bare
+/// `application/json` (no charset), which is what axum sends. `http` falls back
+/// to latin1 for a charset-less response, so this is what proves the client
+/// reads UTF-8 and doesn't mangle a "🍪 cookies" offer.
+http.Response _json(Object body) => http.Response.bytes(
+  utf8.encode(jsonEncode(body)),
+  200,
+  headers: {'content-type': 'application/json'},
+);
+
 void main() {
   group('ApiClient', () {
     test('createGroup posts the fields and parses the session', () async {
@@ -45,6 +55,54 @@ void main() {
       expect(session.token, 'tok-123');
       expect(session.groupId, 'g1');
       expect(session.member.isAdmin, true);
+    });
+
+    test('reads a UTF-8 response body without mangling it', () async {
+      // The server sends UTF-8 JSON under a bare `application/json`. Read
+      // naively, `http` would decode that as latin1 and turn every non-ASCII
+      // character into mojibake — and Goober is full of them.
+      final client = MockClient((req) async {
+        return _json({
+          'token': 'tok-123',
+          'group_id': 'g1',
+          'group_name': 'Beach 🏖 2027',
+          'member': {
+            'id': 'm1',
+            'group_id': 'g1',
+            'display_name': 'Renée',
+            'phone': '5551112222',
+            'is_admin': true,
+          },
+        });
+      });
+      final api = ApiClient(baseUrl: 'http://test', client: client);
+
+      final session = await api.createGroup(
+        groupName: 'Beach 🏖 2027',
+        name: 'Renée',
+        phone: '5551112222',
+      );
+
+      expect(session.groupName, 'Beach 🏖 2027');
+      expect(session.member.displayName, 'Renée');
+    });
+
+    test('fetchFeed sends the bearer token', () async {
+      late http.Request captured;
+      final client = MockClient((req) async {
+        captured = req;
+        return http.Response(
+          jsonEncode({'group_id': 'g1', 'group_name': 'Beach', 'rides': []}),
+          200,
+        );
+      });
+      final api = ApiClient(baseUrl: 'http://test', client: client);
+
+      final feed = await api.fetchFeed(groupId: 'g1', token: 'tok-123');
+
+      expect(captured.headers['Authorization'], 'Bearer tok-123');
+      expect(captured.url.toString(), 'http://test/groups/g1/feed');
+      expect(feed.isEmpty, true);
     });
 
     test('fetchFeed sends the bearer token', () async {
