@@ -52,9 +52,9 @@ goober/
 └── docs/               # guides — e.g. docs/dev-container.md
 ```
 
-## 🚀 Run the walking skeleton locally
+## 🚀 Run it locally
 
-The first slice runs entirely on the dev machine — no cloud host.
+Everything runs on the dev machine — no cloud host.
 
 ```sh
 # 1. Backend (Rust): serves on http://localhost:8080
@@ -92,8 +92,13 @@ local display.
 
 ## 🗺️ Status
 
-**Walking skeleton built:** create/join a group, bearer-token auth,
-the empty activity feed, and admin-curated group places (any member views the
-list; the admin adds, edits, deletes, or copies from another group), running
-locally end to end. Rides, SSE, push, points, and cloud deploy come later. Suggested build order lives in the PRD.
-Next real deployment target: **July 4, 2027**.
+**Built so far:** create/join a group, bearer-token auth, admin-curated group
+places (any member views the list; the admin adds, edits, deletes, or copies from
+another group), and **requesting a ride** — pick a route from the curated places,
+say how many are coming, offer something (or not), ask for it now or schedule it,
+and ping one person from the roster. The new request lands in the group's shared
+activity feed, which everyone sees. All running locally end to end.
+
+Still to come: the rest of the ride lifecycle (claiming, "I'm here", "delivered"),
+broadcast ("anyone?") requests, SSE, push, points, and cloud deploy. Suggested
+build order lives in the PRD. Next real deployment target: **July 4, 2027**.
