@@ -173,10 +173,16 @@ class ApiClient {
   };
 
   /// Decode a JSON response, converting non-2xx into an [ApiException].
+  ///
+  /// Decodes the bytes as UTF-8 rather than reading `resp.body`: the server
+  /// sends `application/json` with no `charset`, and `http` falls back to
+  /// latin1 for that, which mangles every non-ASCII character. Goober is full of
+  /// them — a "🍪 cookies" offer, a name with an accent — so read UTF-8, which is
+  /// what the server actually sends.
   Map<String, dynamic> _decode(http.Response resp) {
-    final Map<String, dynamic> body = resp.body.isEmpty
+    final Map<String, dynamic> body = resp.bodyBytes.isEmpty
         ? <String, dynamic>{}
-        : jsonDecode(resp.body) as Map<String, dynamic>;
+        : jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       final message = (body['error'] as String?) ?? 'request failed';
       throw ApiException(resp.statusCode, message);
