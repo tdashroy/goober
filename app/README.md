@@ -1,9 +1,14 @@
 # Goober app
 
-Flutter client for Goober. This is the **walking skeleton**: start a
-trip (creates a group with you as admin), persist the returned bearer token, and
-render the group's activity feed — empty for now, with a friendly empty state and
-the big **"Get a ride"** button (a placeholder at this stage).
+Flutter client for Goober. Start a trip (creates a group with you as admin),
+persist the returned bearer token, curate the group's places, and render the
+group's shared activity feed. The big **"Get a ride"** button opens the request
+flow: pick a pick-up and drop-off from the curated places, say how many are
+riding (1–8), offer something if you like, choose **now** or a scheduled time,
+and ping one person from the roster. The new request appears in the feed for
+the whole group, and the feed keeps itself fresh: it quietly refetches every
+30 seconds (swapping new rides in without a spinner; a failed poll leaves the
+board alone) and can be pulled to refresh, even from the empty state.
 
 ## Run on the Android emulator
 
@@ -56,10 +61,14 @@ flutter test        # widget + unit tests, headless — no emulator needed
 ```
 
 - `test/token_store_test.dart` — bearer-token persistence.
-- `test/feed_screen_test.dart` — empty-feed render + "Get a ride" button +
-  opening the places screen.
+- `test/feed_screen_test.dart` — empty-feed render, ride cards (route, party
+  size, offer, timing), auto-refresh and pull-to-refresh behavior, "Get a ride"
+  opening the request flow, and opening the places screen.
+- `test/request_ride_screen_test.dart` — the request flow: route, party size,
+  offer, now-or-scheduled, the direct ping to one member, and recovery when a
+  request is rejected or the server is unreachable.
 - `test/api_client_test.dart` — request shapes, auth header, error mapping
-  (groups + places).
+  (groups + places + rides).
 - `test/places_screen_test.dart` — places list, admin-only add/edit/delete/copy
   affordances, add/delete/copy flows, and coordinate validation.
 - `test/boot_flow_test.dart` — fresh boot → onboarding → persist token → feed;
@@ -70,7 +79,14 @@ flutter test        # widget + unit tests, headless — no emulator needed
 - `lib/src/api_client.dart` — HTTP client; `baseUrl` + `http.Client` injected.
 - `lib/src/token_store.dart` — `TokenStore` interface, `SharedPreferences` +
   in-memory implementations.
-- `lib/src/screens/` — onboarding, feed, and places screens. The places screen
+- `lib/src/time_format.dart` — small dependency-free formatters for ride times
+  ("6:30 PM" today, "Sat 4 Jul, 6:30 PM" otherwise) and days ("Today",
+  "Tomorrow", "Sat 4 Jul").
+- `lib/src/screens/` — onboarding, feed, request-ride, and places screens. The
+  request-ride screen schedules a ride by asking for the *time*, with the day
+  defaulting to today and changeable beside it; it takes injectable
+  `pickScheduledTime` / `pickScheduledDay` callbacks so tests can drive
+  scheduling without the platform pickers. The places screen
   lists the group's curated places for any member and, for admins, adds
   add/edit/delete plus a thin "copy from another group" starting point.
   Coordinates are entered as plain lat/lng for now; a drop-a-pin map picker is

@@ -41,6 +41,8 @@ in `server/README.md` and `app/README.md`.
   args keep the feature-gated seed queries in the cache). Needs `sqlx-cli` built
   with the sqlite driver.
 - **Schema:** `sqlx migrate` from `server/migrations/`; migrations run on startup.
+  Times are stored as ISO-8601 UTC strings (`2027-07-04T18:30:00Z`) so they sort
+  lexicographically and parse directly in the client.
 - **Dev testing harness:** `make scenario SEED=beach-trip USERS=bob,grandma` boots
   a seeded server plus one emulator per person, each already signed in as them.
   Both halves are dev-only and must stay impossible in a release build — the
@@ -49,6 +51,17 @@ in `server/README.md` and `app/README.md`.
 - **Local wiring:** server binds `0.0.0.0:8080`; the Android emulator reaches the
   host at `http://10.0.2.2:8080`. Cleartext HTTP is allowed in the debug manifest
   only (`app/android/app/src/debug/AndroidManifest.xml`).
+- **JSON is UTF-8, and Dart's `http` won't assume that.** axum sends
+  `application/json` with no `charset`, and for a charset-less *response* `http`
+  falls back to **latin1** — which mangles every non-ASCII byte (a "🍪 cookies"
+  offer, an accented name). `ApiClient` therefore decodes `resp.bodyBytes` as
+  UTF-8 rather than reading `resp.body`. Mock responses in tests must be built
+  the same way the server sends them — `http.Response.bytes(utf8.encode(json),
+  200)` — or `http.Response(String, ...)` will throw on an emoji. (Request bodies
+  are fine: `http` defaults *those* to UTF-8.)
+- **Widget tests and lazy lists:** a `ListView` only builds what fits the 800×600
+  test viewport, so fields below the fold aren't found. Give such a test a tall
+  surface (`tester.binding.setSurfaceSize`) rather than scrolling step by step.
 
 ### Containerized dev environment
 
