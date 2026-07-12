@@ -19,8 +19,23 @@ EMULATOR_GPU="${EMULATOR_GPU:-host}"
 # Headless smoke mode: boot with no GUI window and no host display. KVM, adb,
 # install and the server bridge are still exercised — used for CI-style checks.
 EMULATOR_NO_WINDOW="${EMULATOR_NO_WINDOW:-0}"
+# Boot the AVD read-only: the emulator works from a scratch copy of the images
+# instead of writing back to the AVD and taking its exclusive lock. This is the
+# emulator's own answer to "Running multiple emulators with the same AVD", and it
+# is what makes running N instances of the one baked AVD safe — no instance can
+# leave lock or state behind for the others. Guest state is not persisted, which
+# costs nothing here: we already boot -no-snapshot, so every launch is a clean
+# device anyway.
+EMULATOR_READ_ONLY="${EMULATOR_READ_ONLY:-1}"
+# Which seeded person this instance's app is signed in as (informational — the
+# APK it installs is the one compiled with that client profile).
+CLIENT_PROFILE="${CLIENT_PROFILE:-}"
 
 log() { echo "[emulator] $*"; }
+
+if [ -n "$CLIENT_PROFILE" ]; then
+  log "this instance runs the app signed in as '$CLIENT_PROFILE'"
+fi
 
 window_args=()
 if [ "$EMULATOR_NO_WINDOW" = "1" ]; then
@@ -70,11 +85,17 @@ if [ -d "$AVD_DIR" ]; then
   rm -rf "$AVD_DIR/running" 2>/dev/null || true
 fi
 
-log "booting Android emulator (KVM-accelerated, gpu: $EMULATOR_GPU)"
+avd_args=()
+if [ "$EMULATOR_READ_ONLY" = "1" ]; then
+  avd_args=(-read-only)
+fi
+
+log "booting Android emulator (KVM-accelerated, gpu: $EMULATOR_GPU, read-only: $EMULATOR_READ_ONLY)"
 adb start-server
-emulator -avd goober \
+emulator -avd "$AVD_NAME" \
   -no-audio -no-boot-anim -no-snapshot -no-metrics \
   -gpu "$EMULATOR_GPU" -accel on \
+  "${avd_args[@]}" \
   "${window_args[@]}" \
   >/tmp/emulator.log 2>&1 &
 

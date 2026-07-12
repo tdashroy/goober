@@ -14,9 +14,23 @@ services:
     build:
       context: .
       dockerfile: docker/server.Dockerfile
+      args:
+        # This is the dev stack, so build the server with its dev testing harness
+        # compiled in: the seed profiles and the route that signs a client in as a
+        # seeded person. Both are absent from a default build of the image — clear
+        # the variable (`SERVER_FEATURES= make up`) to get a production-shaped
+        # server that cannot seed, which is what a deploy would build.
+        SERVER_FEATURES: ${SERVER_FEATURES-dev-seed}
     image: goober-server:latest
     ports:
       - "8080:8080"
+    environment:
+      # Name a seed profile (`SEED_PROFILE=beach-trip`, or `make scenario
+      # SEED=beach-trip`) and the server boots with that ready-made world already
+      # in the database — a group, its members, its places. Unset, the server
+      # starts empty exactly as before. Seeding is idempotent, so this can stay set
+      # across restarts of a persistent database without piling up duplicates.
+      SEED_PROFILE: ${SEED_PROFILE:-}
     volumes:
       - server-data:/data
     healthcheck:
@@ -35,6 +49,11 @@ services:
       dockerfile: docker/build-test.Dockerfile
     image: goober-build-test:latest
     profiles: ["emulator"]
+    environment:
+      # Named seeded people (`bob,grandma`, set by `make scenario USERS=...`) get
+      # one APK each, compiled to boot signed in as them. Empty — the default —
+      # builds the single ordinary APK with the normal login flow.
+      CLIENT_PROFILES: ${CLIENT_PROFILES:-}
     volumes:
       - .:/workspace
       - apk:/apk
@@ -48,23 +67,21 @@ services:
       - android-cmake:/opt/android-sdk/cmake
       - gradle-cache:/home/dev/.gradle
       - pub-cache:/opt/pub-cache
-    # Clear any prior APK first so the emulator (which waits for the file to
+    # Clears any prior APK first so the emulator (which waits for the file to
     # appear, not for this container to exit) never installs a stale build, and
-    # publish the fresh one via an atomic rename so it is only ever seen whole.
-    command: >
-      bash -lc "cd /workspace/app &&
-                mkdir -p /apk &&
-                rm -f /apk/app-debug.apk &&
-                flutter pub get &&
-                flutter build apk --debug --dart-define=GOOBER_API_BASE=http://10.0.2.2:8080 &&
-                cp build/app/outputs/flutter-apk/app-debug.apk /apk/app-debug.apk.tmp &&
-                mv /apk/app-debug.apk.tmp /apk/app-debug.apk &&
-                echo 'APK ready: /apk/app-debug.apk'"
+    # publishes each fresh one via an atomic rename so it is only ever seen whole.
+    command: ["bash", "-lc", "/workspace/docker/build-apks.sh"]
 
   # Long-running, hardware-accelerated Android emulator that renders its own GUI
   # as a native window on the host desktop via the host X server. Opt-in only —
   # it lives behind the `emulator` profile, so the default `docker compose up`
   # (and any display-less machine) never starts it. Launch with `make emulator`.
+  #
+  # This is instance one. `make scenario` runs several people side by side by
+  # generating sibling services (emulator-2, ...) from this one — see
+  # docker/gen-scenario.sh — each with its own window, each installing the APK
+  # built for its person. They all boot the same baked AVD `-read-only` so no
+  # instance locks it against the others.
   emulator:
     build:
       context: .

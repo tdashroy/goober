@@ -6,7 +6,14 @@
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY server/ ./
-RUN cargo build --release --locked
+
+# Optional cargo features, empty by default — a plain build of this image is what
+# a production server would be. The local dev stack passes `dev-seed` (see
+# docker-compose.yml) to compile in the seed profiles and the route that signs a
+# client in as a seeded person. Neither exists in the binary otherwise, so
+# SEED_PROFILE is inert in an image built without it.
+ARG SERVER_FEATURES=""
+RUN cargo build --release --locked ${SERVER_FEATURES:+--features "$SERVER_FEATURES"}
 
 # --- runtime stage ---
 FROM debian:bookworm-slim
