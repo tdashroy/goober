@@ -14,6 +14,12 @@ pub mod error;
 pub mod models;
 pub mod routes;
 
+/// Dev-only seed profiles and the sign-in-as-a-seeded-person route they enable.
+/// Compiled in only under the `dev-seed` feature, which is off by default — a
+/// production build contains none of it.
+#[cfg(feature = "dev-seed")]
+pub mod seed;
+
 use axum::routing::{get, post, put};
 use axum::Router;
 use sqlx::SqlitePool;
@@ -21,7 +27,7 @@ use sqlx::SqlitePool;
 /// Build the axum application. The `SqlitePool` is the router's state, which the
 /// [`CurrentMember`](crate::auth::CurrentMember) extractor reads for auth.
 pub fn build_app(pool: SqlitePool) -> Router {
-    Router::new()
+    let app = Router::new()
         .route("/health", get(routes::health))
         .route("/groups", post(routes::create_group))
         .route("/groups/{group_id}/join", post(routes::join_group))
@@ -35,6 +41,12 @@ pub fn build_app(pool: SqlitePool) -> Router {
             "/groups/{group_id}/places/{place_id}",
             put(routes::update_place).delete(routes::delete_place),
         )
-        .route("/me", get(routes::me))
-        .with_state(pool)
+        .route("/me", get(routes::me));
+
+    // The dev sign-in route exists only in a dev-seed build; there is no URL to
+    // call in a production binary.
+    #[cfg(feature = "dev-seed")]
+    let app = app.route("/dev/session/{member_key}", get(seed::dev_session));
+
+    app.with_state(pool)
 }

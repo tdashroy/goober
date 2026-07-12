@@ -46,6 +46,28 @@ DATABASE_URL="sqlite://goober-dev.db" GOOBER_BIND="0.0.0.0:8080" cargo run
 The server creates the SQLite file and runs migrations on startup. Binding
 `0.0.0.0` lets the Android emulator reach it at `http://10.0.2.2:8080`.
 
+## Seed profiles (dev only)
+
+Testing a group app against an empty database means creating a group and joining
+as several people before anything is interesting. A **seed profile** is a
+ready-made world the server loads at startup instead — a group, its members, its
+places, all with fixed identities so a client can be pointed at one of them by
+name:
+
+```sh
+SEED_PROFILE=beach-trip cargo run --features dev-seed
+```
+
+Seeding is idempotent: rows are written by stable ids, so booting again refreshes
+that world rather than duplicating it, and tokens already in a client's hands keep
+working. With no `SEED_PROFILE` the server boots empty as usual.
+
+Profiles hand out valid bearer tokens for made-up people, so they live behind the
+**`dev-seed` Cargo feature, which is off by default**. A plain `cargo build` — and
+a plain build of the Docker image — contains no seed data, no fixed tokens, and no
+`GET /dev/session/{person}` route; `SEED_PROFILE` there is ignored with a warning.
+The profiles themselves are in `src/seed.rs`.
+
 ## Test
 
 ```sh
@@ -64,8 +86,12 @@ the committed offline cache, and `.cargo/config.toml` sets `SQLX_OFFLINE=true`, 
 **After changing any `query!` macro, regenerate the cache against a real DB:**
 
 ```sh
-DATABASE_URL="sqlite://$(pwd)/goober-dev.db" cargo sqlx prepare
+DATABASE_URL="sqlite://$(pwd)/goober-dev.db" cargo sqlx prepare -- --features dev-seed --all-targets
 ```
+
+(The extra cargo arguments make sure the queries behind the `dev-seed` feature are
+cached too — without them their entries would be dropped and a dev-seed build
+would fail to compile offline.)
 
 (Requires `sqlx-cli` built with the sqlite driver:
 `cargo install sqlx-cli --no-default-features --features sqlite,rustls`.)

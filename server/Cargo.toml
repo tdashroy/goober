@@ -13,6 +13,13 @@ path = "src/main.rs"
 name = "goober_server"
 path = "src/lib.rs"
 
+[features]
+# Dev testing harness: named seed profiles and the route that signs a client in
+# as a seeded person. Off by default — a plain `cargo build` produces a binary
+# with none of it, and `SEED_PROFILE` does nothing there. Turn it on only for
+# local dev (`docker/server.Dockerfile` does so via SERVER_FEATURES).
+dev-seed = []
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
@@ -29,3 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+# Depend on ourselves with `dev-seed` on so `cargo test` always builds the seed
+# code and its route and can test them, while `cargo build` (which ignores
+# dev-dependencies) still produces a binary without them.
+goober-server = { path = ".", features = ["dev-seed"] }

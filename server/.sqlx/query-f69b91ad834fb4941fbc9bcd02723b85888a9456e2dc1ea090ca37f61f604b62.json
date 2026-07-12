@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO members (id, group_id, phone, display_name, token, is_admin)\n            VALUES (?, ?, ?, ?, ?, ?)\n            ON CONFLICT (id) DO UPDATE SET\n                phone = excluded.phone,\n                display_name = excluded.display_name,\n                token = excluded.token,\n                is_admin = excluded.is_admin\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "f69b91ad834fb4941fbc9bcd02723b85888a9456e2dc1ea090ca37f61f604b62"
+}
