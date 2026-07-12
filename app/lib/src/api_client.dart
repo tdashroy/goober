@@ -64,6 +64,18 @@ class ApiClient {
     return Session.fromJson(_decode(resp));
   }
 
+  /// Sign in as one of the people the server's dev seed profile created, named by
+  /// their [memberKey] (`bob`, `grandma`). Returns their [Session] — the same
+  /// shape a real join returns, carrying the token they already hold.
+  ///
+  /// Only a server built with its dev-seed feature serves this route, and it only
+  /// resolves seeded people; against any other server the call fails. Callers
+  /// must gate it to debug builds (see `DevLogin`).
+  Future<Session> devSession({required String memberKey}) async {
+    final resp = await _client.get(Uri.parse('$baseUrl/dev/session/$memberKey'));
+    return Session.fromJson(_decode(resp));
+  }
+
   /// Fetch the group's activity feed. Requires the bearer [token]; the server
   /// rejects the request without a valid one.
   Future<Feed> fetchFeed({
