@@ -77,7 +77,14 @@ the Android emulator is opt-in and appears as a native window on your desktop:
 make base && make up      # headless default stack: just the server
 make test                 # analyze + headless tests, no host toolchain
 make emulator             # opt-in: app on an emulator, as a native desktop window
+make scenario             # a whole trip, seeded: one emulator per relative, each signed in
 ```
+
+Goober is a group app, so testing it by hand means being several people at once.
+`make scenario` does that for you: it boots the server with a ready-made trip —
+a group, relatives, places — and opens one emulator window per person, each
+already signed in as them. It is dev-only and, by construction, impossible in a
+release build.
 
 Full guide: [`docs/dev-container.md`](./docs/dev-container.md). The default stack
 needs only Docker; the emulator additionally needs `/dev/kvm`, `/dev/dri`, and a

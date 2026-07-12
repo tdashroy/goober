@@ -37,8 +37,15 @@ in `server/README.md` and `app/README.md`.
   committed `.sqlx/` offline cache; `server/.cargo/config.toml` sets
   `SQLX_OFFLINE=true` so builds never need a database. After changing any query
   macro, regenerate with `DATABASE_URL=sqlite://$(pwd)/goober-dev.db cargo sqlx
-  prepare` and commit `.sqlx/`. Needs `sqlx-cli` built with the sqlite driver.
+  prepare -- --features dev-seed --all-targets` and commit `.sqlx/` (the extra
+  args keep the feature-gated seed queries in the cache). Needs `sqlx-cli` built
+  with the sqlite driver.
 - **Schema:** `sqlx migrate` from `server/migrations/`; migrations run on startup.
+- **Dev testing harness:** `make scenario SEED=beach-trip USERS=bob,grandma` boots
+  a seeded server plus one emulator per person, each already signed in as them.
+  Both halves are dev-only and must stay impossible in a release build — the
+  server seed sits behind the `dev-seed` cargo feature (off by default), the
+  client auto-login behind `kDebugMode`. See `docs/dev-container.md`.
 - **Local wiring:** server binds `0.0.0.0:8080`; the Android emulator reaches the
   host at `http://10.0.2.2:8080`. Cleartext HTTP is allowed in the debug manifest
   only (`app/android/app/src/debug/AndroidManifest.xml`).

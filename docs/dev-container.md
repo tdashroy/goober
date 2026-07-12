@@ -18,6 +18,7 @@ needs one.
 | Debug APK build (feeds the emulator) | `apk-builder` | runs on `make emulator`, then exits | No |
 | Android emulator with the app installed | `emulator` | native window on your desktop | **Yes** |
 | Interactive Flutter hot-reload loop | `dev` | `make dev` (attaches to a running emulator) | via the emulator |
+| Several emulators, each as a different person | `emulator`, `emulator-2`, … | `make scenario` (see [the dev testing harness](#the-dev-testing-harness)) | **Yes** |
 
 The `server` and `test` pieces are the **default, headless stack**. The
 `apk-builder` and `emulator` pieces are **opt-in** behind the `emulator` compose
@@ -228,6 +229,114 @@ The loop is **press-`r`**, by design and by two independent constraints:
 So: edit on the host, press `r` in the `make dev` terminal. Manual reload works
 regardless of the bind-mount limitation, which is exactly why it's the loop.
 
+## The dev testing harness
+
+Goober is a *group* app: almost nothing interesting happens with one person on
+one screen. Testing it by hand used to mean starting a trip, typing a name and a
+phone number, adding places, then somehow being a second relative as well. The
+harness collapses that into one command:
+
+```sh
+make scenario                                    # the beach trip, as Bob and Grandma
+make scenario SEED=beach-trip USERS=bob,jen      # pick the world and the people
+```
+
+That gives you a **server already holding a whole trip** and **one emulator window
+per person, each already signed in as them**. No login screens, no typing, no
+coordinating two identities by hand. Everything below is **dev-only and cannot
+exist in a shipped build** — see [the guardrails](#guardrails-none-of-this-can-ship).
+
+### The three pieces
+
+**1. A seeded server.** `SEED=beach-trip` names a *seed profile*
+(`server/src/seed.rs`): a ready-made world the server loads into its database at
+startup. `beach-trip` is a group ("Beach 2027") with four relatives — Grandma Jo
+(the trip's admin), Uncle Bob, Cousin Jen, and Pete — and four places: Grandma's,
+The Blue House, The Pier, and the Ice Cream Shack. Its people have **fixed
+identities**, which is what lets a client sign in as one of them by name.
+
+Seeding is **idempotent**: every row is written by a stable id, so booting again
+against the same database refreshes that world instead of duplicating it, and
+tokens a running client already holds keep working. Name no profile and the
+server boots empty, exactly as it always did.
+
+You can seed without the emulator at all — handy for poking at the API:
+
+```sh
+SEED_PROFILE=beach-trip make up
+curl -s localhost:8080/dev/session/bob                                  # Bob's session + token
+curl -s -H 'Authorization: Bearer devseed-bob' localhost:8080/groups/beach-trip/places
+```
+
+**2. Several emulators side by side.** `USERS=bob,grandma` runs one emulator per
+person: the `emulator` service plus a generated `emulator-2` (and `-3`, …). Each
+draws its own native window, each bridges to the same server through its own
+`socat` hop, and they all boot the one AVD baked into the image with
+**`-read-only`** — the emulator's own answer to "Running multiple emulators with
+the same AVD", so no instance can lock or write state that the others trip over.
+
+The generated services live in `docker-compose.scenario.yml`
+(`docker/gen-scenario.sh` writes it; it is gitignored — how many people you want
+is not a fact about the repo). `make down` and `make clean` sweep them up with
+`--remove-orphans`, so teardown does not need to know how many you ran.
+
+**3. Client launch profiles.** A client profile is a compile-time define —
+`--dart-define=CLIENT_PROFILE=bob` — that makes the app boot **already signed in
+as Bob** instead of showing onboarding. On startup it asks the server for that
+seeded person's session (`GET /dev/session/bob`) and uses the real bearer token it
+gets back, so from that point on the app is a completely ordinary client. The
+profile wins over any token already on the device, so relaunching an emulator as
+a different relative really does switch relative.
+
+Because the profile is compiled in, "two people at once" means two APKs:
+`apk-builder` builds one per name in `USERS` (`app-debug-bob.apk`,
+`app-debug-grandma.apk`), and each emulator installs its own. Each window shows a
+corner banner with the person's name so you can tell them apart at a glance.
+
+If the server isn't seeded (or isn't up yet), the app quietly falls back to the
+normal login flow rather than stranding itself.
+
+### Guardrails: none of this can ship
+
+Auto-sign-in is an **auth bypass**, so it is gated twice over, and *both* gates
+are compile-time — not a runtime flag someone can flip:
+
+- **The app must be a debug build.** `DevLogin.fromEnvironment()`
+  (`app/lib/src/dev_login.dart`) returns `null` unless `kDebugMode`, which the
+  Dart compiler folds to a constant `false` in a release build — the sign-in path
+  becomes dead code and is tree-shaken away. A release APK built *with*
+  `--dart-define=CLIENT_PROFILE=bob` shows the ordinary onboarding screen, and its
+  compiled `libapp.so` contains neither the `dev/session` route nor the
+  `CLIENT_PROFILE` define.
+- **The server must be built with its `dev-seed` feature.** The seed profiles, the
+  fixed tokens, and the `/dev/session/{person}` route only exist under that Cargo
+  feature, which is **off by default**. The dev stack turns it on by passing
+  `SERVER_FEATURES=dev-seed` as a build argument (`docker-compose.yml`); a plain
+  build of `docker/server.Dockerfile` — what a deploy would produce — has none of
+  it. `SEED_PROFILE` on such a server logs "this build has no seed profiles" and
+  is ignored, the route 404s, and a seeded token 401s. The strings aren't even in
+  the binary.
+
+So a seeded, auto-signed-in session needs a debug app *and* a dev-seed server. A
+production server offers nothing for a tampered client to call, and a production
+app has no code that would call it.
+
+Build a production-shaped server yourself to see it:
+
+```sh
+SERVER_FEATURES= SEED_PROFILE=beach-trip make up     # warns and ignores the seed
+```
+
+### What is where
+
+| Piece | Lives in |
+|---|---|
+| Seed profiles (the worlds, the people, the places) | `server/src/seed.rs` |
+| Server feature gate | `server/Cargo.toml` (`dev-seed`), `docker/server.Dockerfile` |
+| Client profile + its debug-only gate | `app/lib/src/dev_login.dart` |
+| One APK per person | `docker/build-apks.sh` |
+| One emulator service per person | `docker/gen-scenario.sh` |
+
 ## Run the tests (no host Flutter, no display)
 
 ```sh
@@ -258,12 +367,16 @@ make this explicit (it is also the compiled-in default).
 make base          # (re)build the shared toolchain image
 make up            # headless default stack: server only
 make emulator      # server + APK build + emulator as a native window
+make scenario      # seeded server + one emulator per person, each signed in
 make dev           # interactive flutter run hot-reload loop on a running emulator
 make test          # analyze + headless tests
 make logs          # follow logs
-make down          # stop the stack
+make down          # stop the stack (takes any extra scenario emulators with it)
 make clean         # stop and remove volumes (APK, server DB, build caches)
 ```
+
+`make scenario` takes `SEED=` (which world) and `USERS=` (which people, one
+emulator each); it defaults to `SEED=beach-trip USERS=bob,grandma`.
 
 Docker output is **plain and append-only by default** (no in-place redraw), so
 the terminal stays calm. Prefix any target with `VERBOSE=1` (e.g. `VERBOSE=1 make
