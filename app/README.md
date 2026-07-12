@@ -25,6 +25,29 @@ flutter run --dart-define=GOOBER_API_BASE=http://192.168.1.20:8080
 Cleartext HTTP is enabled in the **debug** build only (`android/app/src/debug/
 AndroidManifest.xml`); production uses HTTPS.
 
+## Launch profiles (dev only)
+
+Against a server that has loaded a seed profile (see `../server/README.md`), the
+app can boot **already signed in** as one of the seeded relatives, skipping
+onboarding — which is what makes it practical to run two emulators as two people:
+
+```sh
+flutter run --dart-define=CLIENT_PROFILE=bob
+```
+
+On startup it fetches that person's session from the server and uses the real
+token it gets back; from there it is an ordinary client. The profile takes
+precedence over any token already on the device, so relaunching as someone else
+actually switches person. With no profile the boot flow is untouched, and if the
+server has no such person the app falls back to normal onboarding.
+
+**This is an auth bypass, and it is impossible in a release build.** The gate
+(`lib/src/dev_login.dart`) is `kDebugMode`, which the compiler folds to a constant
+`false` outside debug — the sign-in path is then dead code and is tree-shaken out,
+so a release APK built *with* `--dart-define=CLIENT_PROFILE=bob` ignores it and
+shows onboarding. It also takes two to tango: the only session it could obtain
+comes from a route that exists solely in a dev-seed server build.
+
 ## Test
 
 ```sh
