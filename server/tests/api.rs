@@ -1,4 +1,4 @@
-//! Integration tests for the walking-skeleton API.
+//! Integration tests for the API.
 //!
 //! These drive the real axum `Router` in-process via `tower::ServiceExt::oneshot`
 //! against a fresh in-memory SQLite database — no live server, no disk, no
@@ -745,6 +745,806 @@ async fn cannot_copy_places_from_a_group_with_no_places() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ----- rides -----
+
+/// A group ready to request a ride in: an admin (Troy), two other members
+/// (Wendel, Emily), and two curated places (The Pier, Grandma's).
+struct RideFixture {
+    group_id: String,
+    /// The admin, who plays the passenger in most tests.
+    passenger_token: String,
+    passenger_id: String,
+    /// The member being pinged to drive.
+    driver_id: String,
+    driver_token: String,
+    /// A third member — a bystander who still sees the shared feed.
+    rider_id: String,
+    pickup_id: String,
+    dropoff_id: String,
+}
+
+async fn ride_fixture(app: &Router) -> RideFixture {
+    let admin = create_group(app, "Beach 2027", "Troy", "5551112222").await;
+    let group_id = admin["group_id"].as_str().unwrap().to_string();
+    let passenger_token = admin["token"].as_str().unwrap().to_string();
+
+    let driver = join_group(app, &group_id, "Wendel", "5553334444").await;
+    let rider = join_group(app, &group_id, "Emily", "5559990000").await;
+
+    RideFixture {
+        pickup_id: create_place(app, &group_id, &passenger_token, "The Pier", 38.9, -75.1).await,
+        dropoff_id: create_place(app, &group_id, &passenger_token, "Grandma's", 38.8, -75.0).await,
+        passenger_id: admin["member"]["id"].as_str().unwrap().to_string(),
+        driver_id: driver["member"]["id"].as_str().unwrap().to_string(),
+        driver_token: driver["token"].as_str().unwrap().to_string(),
+        rider_id: rider["member"]["id"].as_str().unwrap().to_string(),
+        group_id,
+        passenger_token,
+    }
+}
+
+/// Create a place as the group's admin and return its id.
+async fn create_place(
+    app: &Router,
+    group_id: &str,
+    token: &str,
+    name: &str,
+    lat: f64,
+    lng: f64,
+) -> String {
+    let (status, body) = send(
+        app,
+        body_with_token(
+            "POST",
+            &format!("/groups/{group_id}/places"),
+            token,
+            json!({ "name": name, "lat": lat, "lng": lng }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create_place failed: {body}");
+    body["places"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == name)
+        .unwrap_or_else(|| panic!("place {name} missing from {body}"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+/// Request a ride, returning (status, body), so tests can assert on rejections
+/// as well as the happy path.
+async fn request_ride(
+    app: &Router,
+    group_id: &str,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    send(
+        app,
+        body_with_token("POST", &format!("/groups/{group_id}/rides"), token, body),
+    )
+    .await
+}
+
+async fn fetch_feed(app: &Router, group_id: &str, token: &str) -> Value {
+    let (status, body) = send(
+        app,
+        get_with_token(&format!("/groups/{group_id}/feed"), token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "feed failed: {body}");
+    body
+}
+
+// --- acceptance: a passenger requests a ride, pinging the members they chose,
+// --- and it lands in the group's shared feed with its route, party size, and
+// --- offer ---
+
+#[tokio::test]
+async fn passenger_can_request_a_ride_as_a_direct_ping() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_size": 3,
+            "offer": "🍪 cookies",
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert_eq!(ride["status"], "open");
+    assert_eq!(ride["group_id"], f.group_id);
+    assert_eq!(ride["passenger"]["id"], f.passenger_id);
+    assert_eq!(ride["passenger"]["display_name"], "Troy");
+    // Pinging one person is a set of one.
+    assert_eq!(ride["targets"].as_array().unwrap().len(), 1);
+    assert_eq!(ride["targets"][0]["id"], f.driver_id);
+    assert_eq!(ride["targets"][0]["display_name"], "Wendel");
+    assert_eq!(ride["pickup"]["name"], "The Pier");
+    assert_eq!(ride["dropoff"]["name"], "Grandma's");
+    assert_eq!(ride["party_size"], 3);
+    assert_eq!(ride["offer"], "🍪 cookies");
+    // No time given means "now".
+    assert!(ride["scheduled_for"].is_null());
+    // The feed is a public board — it carries names, not phone numbers.
+    assert!(ride["passenger"].get("phone").is_none());
+
+    // It shows up in the shared feed for the whole group, including a member who
+    // is neither the passenger nor the person pinged.
+    for token in [&f.passenger_token, &f.driver_token] {
+        let feed = fetch_feed(&app, &f.group_id, token).await;
+        let rides = feed["rides"].as_array().unwrap();
+        assert_eq!(rides.len(), 1, "feed should show the open request: {feed}");
+        assert_eq!(rides[0]["id"], ride["id"]);
+        assert_eq!(rides[0]["pickup"]["name"], "The Pier");
+        assert_eq!(rides[0]["dropoff"]["name"], "Grandma's");
+        assert_eq!(rides[0]["party_size"], 3);
+        assert_eq!(rides[0]["offer"], "🍪 cookies");
+        assert_eq!(rides[0]["status"], "open");
+    }
+}
+
+// --- acceptance: a ping names a set of members — one person, or a few — and the
+// --- feed shows everyone who was asked ---
+
+#[tokio::test]
+async fn passenger_can_ping_several_people_at_once() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id, f.rider_id],
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    // Everyone asked comes back, by name — whoever gets there first can take it.
+    let names: Vec<&str> = ride["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["display_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Emily", "Wendel"]);
+
+    // The whole set survives into the shared feed.
+    let feed = fetch_feed(&app, &f.group_id, &f.passenger_token).await;
+    let feed_names: Vec<&str> = feed["rides"][0]["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["display_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(feed_names, ["Emily", "Wendel"]);
+}
+
+#[tokio::test]
+async fn a_ping_names_at_least_one_person_and_names_nobody_twice() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Pinging nobody is not a request — a broadcast is a different thing, and
+    // isn't built. An empty set and no set at all read the same way.
+    for body in [
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [],
+        }),
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+        }),
+    ] {
+        let (status, body) = request_ride(&app, &f.group_id, &f.passenger_token, body).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "a ride with nobody pinged was accepted: {body}"
+        );
+    }
+
+    // Asking the same person twice is a slip, not two pings.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id, f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a duplicate ping was kept");
+
+    // Nor can the passenger be anywhere in the set, even alongside someone real.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id, f.passenger_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the passenger was pinged");
+
+    // A stranger in the set is not found, however many real people join them.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id, "no-such-member"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "a non-member was pinged");
+}
+
+// --- acceptance: party size defaults to 1 ("just me") and is an exact, capped count ---
+
+#[tokio::test]
+async fn party_size_defaults_to_one_and_accepts_exact_counts_up_to_the_cap() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Omitted → "just me".
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert_eq!(ride["party_size"], 1);
+
+    // Every exact count up to the cap is accepted.
+    for size in 1..=goober_server::models::MAX_PARTY_SIZE {
+        let (status, ride) = request_ride(
+            &app,
+            &f.group_id,
+            &f.passenger_token,
+            json!({
+                "pickup_id": f.pickup_id,
+                "dropoff_id": f.dropoff_id,
+                "target_ids": [f.driver_id],
+                "party_size": size,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "party size {size} rejected: {ride}");
+        assert_eq!(ride["party_size"], size);
+    }
+
+    // A party of nobody is not a ride, and neither is one past the cap.
+    for size in [0, goober_server::models::MAX_PARTY_SIZE + 1] {
+        let (status, _) = request_ride(
+            &app,
+            &f.group_id,
+            &f.passenger_token,
+            json!({
+                "pickup_id": f.pickup_id,
+                "dropoff_id": f.dropoff_id,
+                "target_ids": [f.driver_id],
+                "party_size": size,
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "party size {size} accepted"
+        );
+    }
+}
+
+// --- acceptance: timing is either "now" or a future scheduled time ---
+
+#[tokio::test]
+async fn a_ride_can_be_scheduled_for_a_future_time() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // A time zone offset is normalized to UTC, so the stored/echoed instant is
+    // canonical however the client wrote it.
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "scheduled_for": "2099-07-04T14:30:00-04:00",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert_eq!(ride["scheduled_for"], "2099-07-04T18:30:00Z");
+
+    let feed = fetch_feed(&app, &f.group_id, &f.passenger_token).await;
+    assert_eq!(feed["rides"][0]["scheduled_for"], "2099-07-04T18:30:00Z");
+}
+
+#[tokio::test]
+async fn a_scheduled_time_must_parse_and_be_in_the_future() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    for when in ["2020-07-04T18:30:00Z", "next tuesday", ""] {
+        let (status, body) = request_ride(
+            &app,
+            &f.group_id,
+            &f.passenger_token,
+            json!({
+                "pickup_id": f.pickup_id,
+                "dropoff_id": f.dropoff_id,
+                "target_ids": [f.driver_id],
+                "scheduled_for": when,
+            }),
+        )
+        .await;
+
+        if when.is_empty() {
+            // A blank time is not a bad time — it just means "now".
+            assert_eq!(status, StatusCode::OK, "blank time rejected: {body}");
+            assert!(body["scheduled_for"].is_null());
+        } else {
+            assert_eq!(status, StatusCode::BAD_REQUEST, "accepted {when}: {body}");
+        }
+    }
+}
+
+// --- acceptance: an offer is optional free text ---
+
+#[tokio::test]
+async fn an_offer_is_optional_free_text() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Cash is allowed — it's just text, the app doesn't process payments.
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "offer": "  $5 and a beer  ",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert_eq!(ride["offer"], "$5 and a beer");
+
+    // A blank offer is no offer, not an empty string.
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "offer": "   ",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert!(ride["offer"].is_null());
+}
+
+// --- acceptance: the passenger may tag who else is riding along ---
+
+#[tokio::test]
+async fn passenger_can_tag_who_is_riding_along() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Tagging the same person twice is the same as tagging them once.
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_size": 2,
+            "party_member_ids": [f.rider_id, f.rider_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert_eq!(ride["party"].as_array().unwrap().len(), 1);
+    assert_eq!(ride["party"][0]["id"], f.rider_id);
+    assert_eq!(ride["party"][0]["display_name"], "Emily");
+
+    // The tags survive into the feed.
+    let feed = fetch_feed(&app, &f.group_id, &f.passenger_token).await;
+    assert_eq!(feed["rides"][0]["party"][0]["display_name"], "Emily");
+
+    // Tagging is optional — a ride with nobody tagged has an empty party.
+    let (_, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(ride["party"], json!([]));
+}
+
+// --- acceptance: the tagged riders must be a party that could actually exist —
+// --- no more of them than the party size allows, and never the driver ---
+
+#[tokio::test]
+async fn tagged_riders_fit_the_party_size_and_exclude_the_person_being_asked() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let fourth = join_group(&app, &f.group_id, "Nora", "5552223333").await;
+    let fourth_id = fourth["member"]["id"].as_str().unwrap().to_string();
+
+    // `party_size` counts the passenger, so a party of 2 has room for exactly
+    // one other rider.
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_size": 2,
+            "party_member_ids": [f.rider_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    assert_eq!(ride["party"].as_array().unwrap().len(), 1);
+
+    // One more rider than the count leaves room for is a contradiction — as is
+    // tagging anyone at all when it's "just me".
+    for body in [
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_size": 2,
+            "party_member_ids": [f.rider_id, fourth_id],
+        }),
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_size": 1,
+            "party_member_ids": [f.rider_id],
+        }),
+    ] {
+        let (status, _) = request_ride(&app, &f.group_id, &f.passenger_token, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "over-count party accepted");
+    }
+
+    // Everyone pinged is being asked to drive, not to ride along — and that holds
+    // for each of them when several are asked.
+    for targets in [
+        json!([f.driver_id]),
+        json!([f.driver_id, fourth_id]),
+        json!([fourth_id, f.driver_id]),
+    ] {
+        let (status, _) = request_ride(
+            &app,
+            &f.group_id,
+            &f.passenger_token,
+            json!({
+                "pickup_id": f.pickup_id,
+                "dropoff_id": f.dropoff_id,
+                "target_ids": targets,
+                "party_size": 3,
+                "party_member_ids": [f.rider_id, f.driver_id],
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "someone being asked was tagged as a rider"
+        );
+    }
+}
+
+// --- acceptance: a request is validated — real places, a real person to ping,
+// --- and a route that actually goes somewhere ---
+
+#[tokio::test]
+async fn a_request_needs_two_different_places_and_someone_else_to_ping() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Going nowhere.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.pickup_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Asking yourself for a ride.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.passenger_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A place that doesn't exist.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": "no-such-place",
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A person who doesn't exist.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": ["no-such-member"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// --- acceptance: rides are scoped to the group ---
+
+#[tokio::test]
+async fn rides_cannot_reach_across_groups() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // A separate group with its own member and its own place.
+    let other = create_group(&app, "Lake 2027", "Todd", "5557778888").await;
+    let other_group_id = other["group_id"].as_str().unwrap().to_string();
+    let other_token = other["token"].as_str().unwrap().to_string();
+    let other_member_id = other["member"]["id"].as_str().unwrap().to_string();
+    let other_place_id =
+        create_place(&app, &other_group_id, &other_token, "The Dock", 41.0, -85.0).await;
+
+    // Another group's place can't be a stop on this group's ride.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": other_place_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Nor can another group's member be pinged, or be tagged as riding along.
+    for body in [
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [other_member_id],
+        }),
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_member_ids": [other_member_id],
+        }),
+    ] {
+        let (status, _) = request_ride(&app, &f.group_id, &f.passenger_token, body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // A real ride in one group is invisible in the other's feed.
+    let (status, _) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let other_feed = fetch_feed(&app, &other_group_id, &other_token).await;
+    assert_eq!(other_feed["rides"], json!([]));
+
+    // And a token from one group can't request a ride in the other.
+    let (status, _) = request_ride(
+        &app,
+        &other_group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": other_place_id,
+            "dropoff_id": other_place_id,
+            "target_ids": [other_member_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn requesting_a_ride_requires_a_token() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    let (status, _) = send(
+        &app,
+        post_json(
+            &format!("/groups/{}/rides", f.group_id),
+            json!({
+                "pickup_id": f.pickup_id,
+                "dropoff_id": f.dropoff_id,
+                "target_ids": [f.driver_id],
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+// --- acceptance: the feed lists the group's rides, newest first ---
+
+#[tokio::test]
+async fn the_feed_lists_every_ride_in_the_group() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Two requests from different passengers.
+    let (_, first) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+        }),
+    )
+    .await;
+    let (_, second) = request_ride(
+        &app,
+        &f.group_id,
+        &f.driver_token,
+        json!({
+            "pickup_id": f.dropoff_id,
+            "dropoff_id": f.pickup_id,
+            "target_ids": [f.passenger_id],
+        }),
+    )
+    .await;
+
+    let feed = fetch_feed(&app, &f.group_id, &f.passenger_token).await;
+    let rides = feed["rides"].as_array().unwrap();
+    assert_eq!(rides.len(), 2);
+
+    // Both are there, and each keeps its own route and passenger.
+    let ids: Vec<&str> = rides.iter().map(|r| r["id"].as_str().unwrap()).collect();
+    assert!(ids.contains(&first["id"].as_str().unwrap()));
+    assert!(ids.contains(&second["id"].as_str().unwrap()));
+
+    let second_in_feed = rides
+        .iter()
+        .find(|r| r["id"] == second["id"])
+        .expect("second ride in feed");
+    assert_eq!(second_in_feed["passenger"]["display_name"], "Wendel");
+    assert_eq!(second_in_feed["pickup"]["name"], "Grandma's");
+    assert_eq!(second_in_feed["dropoff"]["name"], "The Pier");
+}
+
+// --- acceptance: the roster is the list of people you can ping ---
+
+#[tokio::test]
+async fn the_roster_lists_the_groups_members() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    let (status, body) = send(
+        &app,
+        get_with_token(
+            &format!("/groups/{}/members", f.group_id),
+            &f.passenger_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "roster failed: {body}");
+
+    let members = body["members"].as_array().unwrap();
+    let names: Vec<&str> = members
+        .iter()
+        .map(|m| m["display_name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["Emily", "Troy", "Wendel"]);
+
+    // The roster is group-visible, so like the feed it never carries phone
+    // numbers or tokens — just who you can ping and whether they're the admin.
+    for m in members {
+        assert!(m["is_admin"].is_boolean(), "roster entry: {m}");
+        assert!(m.get("phone").is_none(), "roster leaked a phone: {m}");
+        assert!(m.get("token").is_none(), "roster leaked a token: {m}");
+    }
+
+    // Another group's token can't read this roster.
+    let other = create_group(&app, "Lake 2027", "Todd", "5557778888").await;
+    let (status, _) = send(
+        &app,
+        get_with_token(
+            &format!("/groups/{}/members", f.group_id),
+            other["token"].as_str().unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
