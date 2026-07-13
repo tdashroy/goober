@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
-import 'places_screen.dart';
+import 'manage_places_screen.dart';
 
 /// One row on the admin screen: what it is called, what it is for, and the
 /// screen it opens. A future admin-only feature becomes another entry in
@@ -60,7 +60,7 @@ class _AdminScreenState extends State<AdminScreen> {
       subtitle:
           'Add, edit, and remove the houses and landmarks your group rides '
           'between.',
-      open: (_) => PlacesScreen(
+      open: (_) => ManagePlacesScreen(
         api: widget.api,
         session: widget.session,
         onUnauthenticated: widget.onUnauthenticated,

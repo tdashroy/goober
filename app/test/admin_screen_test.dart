@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:goober/src/api_client.dart';
 import 'package:goober/src/models.dart';
 import 'package:goober/src/screens/admin_screen.dart';
+import 'package:goober/src/screens/manage_places_screen.dart';
 import 'package:goober/src/theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -22,10 +23,16 @@ Session _session() => const Session(
   ),
 );
 
-/// Serves an empty places list to whatever the admin screen opens.
+/// Serves an empty places list to whatever the admin screen opens, as UTF-8
+/// bytes under a bare `application/json` (no charset), which is what axum
+/// sends.
 ApiClient _api() {
   final client = MockClient((req) async {
-    return http.Response(jsonEncode({'group_id': 'g1', 'places': []}), 200);
+    return http.Response.bytes(
+      utf8.encode(jsonEncode({'group_id': 'g1', 'places': []})),
+      200,
+      headers: {'content-type': 'application/json'},
+    );
   });
   return ApiClient(baseUrl: 'http://test', client: client);
 }
@@ -50,15 +57,15 @@ void main() {
     expect(find.text('Manage places'), findsOneWidget);
   });
 
-  testWidgets('Manage places opens the places screen', (tester) async {
+  testWidgets('Manage places opens places management', (tester) async {
     await tester.pumpWidget(_harness());
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('manage-places-action')));
     await tester.pumpAndSettle();
 
-    // The places screen, with its own add affordance for the admin.
-    expect(find.text('Places'), findsOneWidget);
+    // The management screen, with the admin's editing affordances.
+    expect(find.byType(ManagePlacesScreen), findsOneWidget);
     expect(find.byKey(const Key('add-place-button')), findsOneWidget);
   });
 }

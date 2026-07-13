@@ -129,8 +129,10 @@ class _FeedScreenState extends State<FeedScreen> {
               : widget.session.groupName,
         ),
         actions: [
-          // Everyone can browse the group's places; the screen itself is
-          // read-only for members and gains its editing controls for admins.
+          // Everyone can browse the group's places — you need to know where you
+          // can be taken before you can ask for a ride there. The list opens
+          // read-only for everyone, admins included; curating it lives behind
+          // the admin door below.
           _AppBarAction(
             key: const Key('open-places-button'),
             icon: Icons.place_outlined,

@@ -93,12 +93,13 @@ local display.
 ## 🗺️ Status
 
 **Built so far:** create/join a group, bearer-token auth, admin-curated group
-places (any member views the list; the admin adds, edits, deletes, or copies from
-another group), an admin screen gathering the admin-only actions behind a labeled
-entry in the feed, and **requesting a ride** — pick a route from the curated places,
-say how many are coming, offer something (or not), ask for it now or schedule it,
-and ping one person from the roster. The new request lands in the group's shared
-activity feed, which everyone sees. All running locally end to end.
+places (every member browses the list read-only; the admin adds, edits, deletes,
+or copies from another group), an admin screen gathering the admin-only actions
+behind a labeled entry in the feed, and **requesting a ride** — pick a route from
+the curated places, say how many are coming, offer something (or not), ask for it
+now or schedule it, and ping one person from the roster. The new request lands in
+the group's shared activity feed, which everyone sees. All running locally end to
+end.
 
 Still to come: the rest of the ride lifecycle (claiming, "I'm here", "delivered"),
 broadcast ("anyone?") requests, SSE, push, points, and cloud deploy. Suggested

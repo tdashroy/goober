@@ -31,186 +31,110 @@ Map<String, dynamic> _place(String id, String name, double lat, double lng) => {
   'lng': lng,
 };
 
-String _placesJson(List<Map<String, dynamic>> places) =>
-    jsonEncode({'group_id': 'g1', 'places': places});
+/// A response shaped like the server's: UTF-8 bytes under a bare
+/// `application/json` (no charset), which is what axum sends.
+http.Response _json(Object body) => http.Response.bytes(
+  utf8.encode(jsonEncode(body)),
+  200,
+  headers: {'content-type': 'application/json'},
+);
 
-/// An API whose GET returns [initial], and whose mutating verbs return whatever
-/// [onMutate] computes (defaults to echoing [initial]). Records each request.
-ApiClient _api({
-  required List<Map<String, dynamic>> initial,
-  List<Map<String, dynamic>> Function(http.Request req)? onMutate,
-  List<http.Request>? log,
-}) {
+/// Serves [places], and records every request so a test can assert the screen
+/// only ever reads.
+ApiClient _api(List<Map<String, dynamic>> places, {List<http.Request>? log}) {
   final client = MockClient((req) async {
     log?.add(req);
-    if (req.method == 'GET') {
-      return http.Response(_placesJson(initial), 200);
-    }
-    final result = onMutate?.call(req) ?? initial;
-    return http.Response(_placesJson(result), 200);
+    return _json({'group_id': 'g1', 'places': places});
   });
   return ApiClient(baseUrl: 'http://test', client: client);
 }
 
-Widget _harness(ApiClient api, Session session) => MaterialApp(
+Widget _harness(ApiClient api, {required bool isAdmin}) => MaterialApp(
   theme: buildGooberTheme(),
-  home: PlacesScreen(api: api, session: session),
+  home: PlacesScreen(
+    api: api,
+    session: _session(isAdmin: isAdmin),
+  ),
 );
 
 void main() {
-  testWidgets('lists the group places for a member', (tester) async {
-    final api = _api(
-      initial: [
-        _place('p1', "Grandma's", 38.8, -75.0),
-        _place('p2', 'The Pier', 38.9, -75.1),
-      ],
-    );
-    await tester.pumpWidget(_harness(api, _session(isAdmin: false)));
+  testWidgets('lists the group places with where they are', (tester) async {
+    final api = _api([
+      _place('p1', "Grandma's", 38.8, -75.0),
+      _place('p2', 'The Pier', 38.9, -75.1),
+    ]);
+    await tester.pumpWidget(_harness(api, isAdmin: false));
     await tester.pumpAndSettle();
 
     expect(find.text("Grandma's"), findsOneWidget);
     expect(find.text('The Pier'), findsOneWidget);
+    expect(find.text('38.80000, -75.00000'), findsOneWidget);
   });
 
-  testWidgets('non-admins see no add / edit / delete affordances', (
+  testWidgets('offers a member no way to add, edit, delete or copy', (
     tester,
   ) async {
-    final api = _api(initial: [_place('p1', "Grandma's", 38.8, -75.0)]);
-    await tester.pumpWidget(_harness(api, _session(isAdmin: false)));
+    final log = <http.Request>[];
+    final api = _api([_place('p1', "Grandma's", 38.8, -75.0)], log: log);
+    await tester.pumpWidget(_harness(api, isAdmin: false));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('add-place-button')), findsNothing);
     expect(find.byKey(const Key('edit-place-p1')), findsNothing);
     expect(find.byKey(const Key('delete-place-p1')), findsNothing);
+    expect(find.byKey(const Key('places-menu-button')), findsNothing);
+    expect(find.byType(FloatingActionButton), findsNothing);
+
+    // Purely a viewer: it only ever reads.
+    expect(log.every((r) => r.method == 'GET'), isTrue);
   });
 
-  testWidgets('admins see add and per-place edit / delete controls', (
+  testWidgets('is read-only for an admin too — they manage from Admin', (
     tester,
   ) async {
-    final api = _api(initial: [_place('p1', "Grandma's", 38.8, -75.0)]);
-    await tester.pumpWidget(_harness(api, _session(isAdmin: true)));
+    final api = _api([_place('p1', "Grandma's", 38.8, -75.0)]);
+    await tester.pumpWidget(_harness(api, isAdmin: true));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('add-place-button')), findsOneWidget);
-    expect(find.byKey(const Key('edit-place-p1')), findsOneWidget);
-    expect(find.byKey(const Key('delete-place-p1')), findsOneWidget);
-  });
-
-  testWidgets('empty state differs for admin vs member', (tester) async {
-    // Member.
-    await tester.pumpWidget(
-      _harness(_api(initial: []), _session(isAdmin: false)),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('No places yet'), findsOneWidget);
-    expect(find.textContaining("admin hasn't added"), findsOneWidget);
-
-    // Admin.
-    await tester.pumpWidget(
-      _harness(_api(initial: []), _session(isAdmin: true)),
-    );
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Add the houses'), findsOneWidget);
-  });
-
-  testWidgets('admin adds a place through the dialog', (tester) async {
-    final log = <http.Request>[];
-    final api = _api(
-      initial: [],
-      log: log,
-      onMutate: (req) => [_place('p9', 'The Pier', 38.9, -75.1)],
-    );
-    await tester.pumpWidget(_harness(api, _session(isAdmin: true)));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('add-place-button')));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('place-name-field')),
-      'The Pier',
-    );
-    await tester.enterText(find.byKey(const Key('place-lat-field')), '38.9');
-    await tester.enterText(find.byKey(const Key('place-lng-field')), '-75.1');
-    await tester.tap(find.byKey(const Key('save-place-button')));
-    await tester.pumpAndSettle();
-
-    // A POST was made and the new place now shows in the list.
-    expect(log.any((r) => r.method == 'POST'), isTrue);
-    expect(find.text('The Pier'), findsOneWidget);
-  });
-
-  testWidgets('the add dialog rejects a bad latitude', (tester) async {
-    final log = <http.Request>[];
-    final api = _api(initial: [], log: log);
-    await tester.pumpWidget(_harness(api, _session(isAdmin: true)));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const Key('add-place-button')));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(find.byKey(const Key('place-name-field')), 'X');
-    await tester.enterText(find.byKey(const Key('place-lat-field')), '999');
-    await tester.enterText(find.byKey(const Key('place-lng-field')), '0');
-    await tester.tap(find.byKey(const Key('save-place-button')));
-    await tester.pumpAndSettle();
-
-    // Validation blocked the save: no POST, error shown, dialog still open.
-    expect(log.any((r) => r.method == 'POST'), isFalse);
-    expect(find.textContaining('Latitude must be'), findsOneWidget);
-  });
-
-  testWidgets('copy menu is admin-only', (tester) async {
-    final api = _api(initial: [_place('p1', "Grandma's", 38.8, -75.0)]);
-    await tester.pumpWidget(_harness(api, _session(isAdmin: false)));
-    await tester.pumpAndSettle();
+    expect(find.text("Grandma's"), findsOneWidget);
+    expect(find.byKey(const Key('add-place-button')), findsNothing);
+    expect(find.byKey(const Key('edit-place-p1')), findsNothing);
+    expect(find.byKey(const Key('delete-place-p1')), findsNothing);
     expect(find.byKey(const Key('places-menu-button')), findsNothing);
   });
 
-  testWidgets('admin copies places from another group', (tester) async {
-    final log = <http.Request>[];
-    final api = _api(
-      initial: [],
-      log: log,
-      onMutate: (req) => [_place('p1', "Grandma's", 38.8, -75.0)],
-    );
-    await tester.pumpWidget(_harness(api, _session(isAdmin: true)));
+  testWidgets('an empty list says the admin has added none yet', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_harness(_api([]), isAdmin: false));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('places-menu-button')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('copy-places-menu-item')));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('copy-from-group-field')),
-      'g0',
-    );
-    await tester.tap(find.byKey(const Key('confirm-copy-places')));
-    await tester.pumpAndSettle();
-
-    final copy = log.firstWhere((r) => r.url.path.endsWith('/places/copy'));
-    expect(jsonDecode(copy.body)['from_group_id'], 'g0');
-    expect(find.text("Grandma's"), findsOneWidget);
+    expect(find.text('No places yet'), findsOneWidget);
+    expect(find.textContaining("admin hasn't added"), findsOneWidget);
   });
 
-  testWidgets('admin deletes a place after confirming', (tester) async {
-    final log = <http.Request>[];
-    final api = _api(
-      initial: [_place('p1', "Grandma's", 38.8, -75.0)],
-      log: log,
-      onMutate: (req) => [], // deletion empties the list
+  testWidgets('a failed load offers a retry that refetches', (tester) async {
+    var calls = 0;
+    final client = MockClient((req) async {
+      calls++;
+      if (calls == 1) return http.Response('boom', 500);
+      return _json({
+        'group_id': 'g1',
+        'places': [_place('p1', "Grandma's", 38.8, -75.0)],
+      });
+    });
+    await tester.pumpWidget(
+      _harness(
+        ApiClient(baseUrl: 'http://test', client: client),
+        isAdmin: false,
+      ),
     );
-    await tester.pumpWidget(_harness(api, _session(isAdmin: true)));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const Key('delete-place-p1')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const Key('confirm-delete-place')));
+    await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
 
-    expect(log.any((r) => r.method == 'DELETE'), isTrue);
-    expect(find.text("Grandma's"), findsNothing);
-    expect(find.text('No places yet'), findsOneWidget);
+    expect(calls, 2);
+    expect(find.text("Grandma's"), findsOneWidget);
   });
 }

@@ -29,6 +29,12 @@ Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (created lazily;
   "administration" nor "admin-only" and members should never be shown a control
   they cannot use. Client-side gating is for clarity only; the server enforces
   admin permissions regardless.
+- **Gating a feature to admins must not take it away from members.** Where
+  members need to *see* what an admin curates — the group's places being the
+  first case — give them a plain read-only view of it and keep the editing on the
+  admin screen, rather than hiding the data behind the admin door. Two screens
+  over one flagged screen: a viewer everyone opens (no management affordances at
+  all, not even disabled ones) and a management screen only admins reach.
 
 ## Development
 
