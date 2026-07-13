@@ -95,12 +95,16 @@ local display.
 **Built so far:** create/join a group, bearer-token auth, admin-curated group
 places (every member browses the list read-only; the admin adds, edits, deletes,
 or copies from another group), an admin screen gathering the admin-only actions
-behind a labeled entry in the feed, and **requesting a ride** — pick a route from
-the curated places, say how many are coming, offer something (or not), ask for it
-now or schedule it, and ping one person from the roster. The new request lands in
-the group's shared activity feed, which everyone sees. All running locally end to
-end.
+behind a labeled entry in the feed, **requesting a ride** — pick a route from the
+curated places, say how many are coming, offer something (or not), ask for it now
+or schedule it, and ping one person from the roster — and the **ride lifecycle**
+the pinged person drives from the feed: answer from a structured menu ("On my
+way" claims the ride, first-come; the "no"s can name who took the cart or who's
+coming instead, tappable to re-ping them), then "I'm here", then "delivered" from
+either end. The new request lands in the group's shared activity feed, which
+everyone sees, and the server enforces every step and audits it. All running
+locally end to end.
 
-Still to come: the rest of the ride lifecycle (claiming, "I'm here", "delivered"),
-broadcast ("anyone?") requests, SSE, push, points, and cloud deploy. Suggested
-build order lives in the PRD. Next real deployment target: **July 4, 2027**.
+Still to come: broadcast ("anyone?") requests, SSE, push, points, and cloud
+deploy. Suggested build order lives in the PRD. Next real deployment target:
+**July 4, 2027**.
