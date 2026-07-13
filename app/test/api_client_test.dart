@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goober/src/api_client.dart';
+import 'package:goober/src/models.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -403,6 +404,162 @@ void main() {
       expect(captured.url.toString(), 'http://test/groups/g1/places/copy');
       final body = jsonDecode(captured.body) as Map<String, dynamic>;
       expect(body['from_group_id'], 'g0');
+    });
+
+    test(
+      'rideAction sends the step and parses the ride it left behind',
+      () async {
+        late http.Request captured;
+        final client = MockClient((req) async {
+          captured = req;
+          return _json({
+            'id': 'r1',
+            'group_id': 'g1',
+            'status': 'accepted',
+            'passenger': {'id': 'm1', 'display_name': 'Troy'},
+            'driver': {'id': 'm2', 'display_name': 'Wendel'},
+            'targets': [
+              {'id': 'm2', 'display_name': 'Wendel'},
+              {'id': 'm3', 'display_name': 'Emily'},
+            ],
+            'responses': [
+              {
+                'member': {'id': 'm2', 'display_name': 'Wendel'},
+                'response': 'on_my_way',
+                'person': null,
+              },
+              {
+                'member': {'id': 'm3', 'display_name': 'Emily'},
+                'response': 'no_cart',
+                'person': {'id': 'm4', 'display_name': 'Susan'},
+              },
+            ],
+            'pickup': {
+              'id': 'p1',
+              'group_id': 'g1',
+              'name': 'The Pier',
+              'lat': 38.9,
+              'lng': -75.1,
+            },
+            'dropoff': {
+              'id': 'p2',
+              'group_id': 'g1',
+              'name': "Grandma's",
+              'lat': 38.8,
+              'lng': -75.0,
+            },
+            'party_size': 1,
+            'party': <Map<String, dynamic>>[],
+            'offer': null,
+            'scheduled_for': null,
+            'created_at': '2027-07-04T18:00:00Z',
+          });
+        });
+        final api = ApiClient(baseUrl: 'http://test', client: client);
+
+        final ride = await api.rideAction(
+          groupId: 'g1',
+          token: 'tok-123',
+          rideId: 'r1',
+          action: RideAction.noCart,
+          personId: 'm4',
+        );
+
+        expect(captured.method, 'POST');
+        expect(captured.headers['Authorization'], 'Bearer tok-123');
+        expect(
+          captured.url.toString(),
+          'http://test/groups/g1/rides/r1/actions',
+        );
+        final body = jsonDecode(captured.body) as Map<String, dynamic>;
+        expect(body['action'], 'no_cart');
+        // A lead is a person the app can act on, not a sentence.
+        expect(body['person_id'], 'm4');
+
+        expect(ride.status, 'accepted');
+        expect(ride.driver!.displayName, 'Wendel');
+        expect(ride.isDriver('m2'), true);
+        expect(ride.responseFrom('m3')!.response, RideAction.noCart);
+        expect(ride.responseFrom('m3')!.person!.displayName, 'Susan');
+        expect(ride.responseFrom('m2')!.person, isNull);
+      },
+    );
+
+    test('an answer of a kind this build does not know drops off the list', () {
+      // A newer server may have grown answers this app hasn't heard of; one
+      // strange line shouldn't take the whole ride down with it.
+      final ride = Ride.fromJson({
+        'id': 'r1',
+        'group_id': 'g1',
+        'status': 'open',
+        'passenger': {'id': 'm1', 'display_name': 'Troy'},
+        'driver': null,
+        'targets': [
+          {'id': 'm2', 'display_name': 'Wendel'},
+        ],
+        'responses': [
+          {
+            'member': {'id': 'm2', 'display_name': 'Wendel'},
+            'response': 'washing_my_cart',
+            'person': null,
+          },
+          {
+            'member': {'id': 'm3', 'display_name': 'Emily'},
+            'response': 'cant_right_now',
+            'person': null,
+          },
+        ],
+        'pickup': {
+          'id': 'p1',
+          'group_id': 'g1',
+          'name': 'The Pier',
+          'lat': 38.9,
+          'lng': -75.1,
+        },
+        'dropoff': {
+          'id': 'p2',
+          'group_id': 'g1',
+          'name': "Grandma's",
+          'lat': 38.8,
+          'lng': -75.0,
+        },
+        'party_size': 1,
+        'party': <Map<String, dynamic>>[],
+        'offer': null,
+        'scheduled_for': null,
+        'created_at': '2027-07-04T18:00:00Z',
+      });
+
+      expect(ride.responses, hasLength(1));
+      expect(ride.responses.single.response, RideAction.cantRightNow);
+    });
+
+    test('a step the server refuses surfaces its reason', () async {
+      final client = MockClient((req) async {
+        return http.Response(
+          jsonEncode({'error': 'someone else already took this ride'}),
+          409,
+        );
+      });
+      final api = ApiClient(baseUrl: 'http://test', client: client);
+
+      expect(
+        () => api.rideAction(
+          groupId: 'g1',
+          token: 'tok-123',
+          rideId: 'r1',
+          action: RideAction.onMyWay,
+        ),
+        throwsA(
+          isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 409)
+              .having(
+                (e) => e.message,
+                'message',
+                'someone else already took this ride',
+              ),
+        ),
+      );
     });
 
     test('a rejected mutation surfaces the server message', () async {

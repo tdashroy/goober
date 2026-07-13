@@ -147,15 +147,110 @@ class MemberRef {
   );
 }
 
-/// A ride as the feed shows it: who asked, who they pinged, the route, how many
-/// are riding, what's on offer, and when it's wanted for.
+/// Where a ride has got to. The server owns the walk from one to the next; the
+/// app only ever reads these, and asks for the moves in [RideAction].
+class RideStatus {
+  /// Nobody has claimed it: still on offer to everyone pinged.
+  static const open = 'open';
+
+  /// Claimed — the driver is on the way.
+  static const accepted = 'accepted';
+
+  /// The driver is at the pickup.
+  static const arrived = 'arrived';
+
+  /// Done, and closed.
+  static const delivered = 'delivered';
+}
+
+/// Every move a ride can be asked to make.
+///
+/// The first four are the menu a **pinged member** picks from — deliberately not
+/// a yes/no, because the three "no"s each carry something the passenger can use.
+/// The server decides whether a move is legal, from the ride's status and from
+/// who is asking; the app only asks.
+enum RideAction {
+  /// Accept — and thereby claim the ride. First one there wins.
+  onMyWay('on_my_way'),
+
+  /// "Can't right now."
+  cantRightNow('cant_right_now'),
+
+  /// "I don't have a cart" — optionally naming who took it.
+  noCart('no_cart'),
+
+  /// "Someone else will come" — naming who's actually driving. It doesn't claim
+  /// the ride: that person hasn't been asked yet, so the passenger taps them and
+  /// asks.
+  someoneElse('someone_else'),
+
+  /// The driver is at the pickup.
+  arrived('arrived'),
+
+  /// Either the driver or the passenger closes the ride out.
+  delivered('delivered');
+
+  const RideAction(this.wire);
+
+  /// How the server spells it.
+  final String wire;
+
+  /// The action a wire spelling names, or null for one this build doesn't
+  /// know — a newer server may have grown answers this app hasn't heard of.
+  static RideAction? fromWire(String raw) {
+    for (final a in RideAction.values) {
+      if (a.wire == raw) return a;
+    }
+    return null;
+  }
+}
+
+/// What one pinged member said back.
+class RideResponse {
+  const RideResponse({
+    required this.member,
+    required this.response,
+    required this.person,
+  });
+
+  /// The pinged member who answered.
+  final MemberRef member;
+
+  /// Which of the four they picked.
+  final RideAction response;
+
+  /// Who they pointed at, if anyone: the person who took their cart, or the
+  /// person coming instead. Tapping them is how the passenger asks *them* for a
+  /// ride, which is why a lead is a person and not a sentence.
+  final MemberRef? person;
+
+  /// One answer off the wire, or null when its kind is one this build doesn't
+  /// know — that answer drops off the list rather than failing the whole feed.
+  static RideResponse? fromJson(Map<String, dynamic> json) {
+    final response = RideAction.fromWire(json['response'] as String);
+    if (response == null) return null;
+    return RideResponse(
+      member: MemberRef.fromJson(json['member'] as Map<String, dynamic>),
+      response: response,
+      person: json['person'] == null
+          ? null
+          : MemberRef.fromJson(json['person'] as Map<String, dynamic>),
+    );
+  }
+}
+
+/// A ride as the feed shows it: who asked, who they pinged, what those people
+/// said back, who's driving, the route, how many are riding, what's on offer,
+/// and when it's wanted for.
 class Ride {
   const Ride({
     required this.id,
     required this.groupId,
     required this.status,
     required this.passenger,
+    required this.driver,
     required this.targets,
+    required this.responses,
     required this.pickup,
     required this.dropoff,
     required this.partySize,
@@ -168,13 +263,19 @@ class Ride {
   final String id;
   final String groupId;
 
-  /// `open` today; a driver accepting / arriving / delivering comes later.
+  /// One of [RideStatus]: `open`, `accepted`, `arrived`, `delivered`.
   final String status;
   final MemberRef passenger;
+
+  /// Who claimed the ride and is driving it. Null until someone accepts.
+  final MemberRef? driver;
 
   /// Everyone who was pinged — one person, or a few. Never empty: a ride with
   /// nobody asked would be a broadcast ("anyone?"), which isn't built yet.
   final List<MemberRef> targets;
+
+  /// What the people pinged have said back so far. Empty until someone answers.
+  final List<RideResponse> responses;
   final Place pickup;
   final Place dropoff;
 
@@ -195,13 +296,53 @@ class Ride {
   /// A scheduled ride is one wanted at a set time rather than right now.
   bool get isScheduled => scheduledFor != null;
 
+  /// Still going begging: nobody has claimed it, so everyone pinged can answer.
+  bool get isOpen => status == RideStatus.open;
+
+  /// Whether [memberId] is one of the people asked to drive.
+  bool isTarget(String memberId) => targets.any((m) => m.id == memberId);
+
+  /// Whether [memberId] claimed the ride and is driving it.
+  bool isDriver(String memberId) => driver?.id == memberId;
+
+  /// What [memberId] has already said back, if they were asked and have.
+  RideResponse? responseFrom(String memberId) {
+    for (final r in responses) {
+      if (r.member.id == memberId) return r;
+    }
+    return null;
+  }
+
+  /// Whether [memberId] still has the four-option menu in front of them: they
+  /// were asked, and the ride is still there to be taken. Answering again is
+  /// allowed — someone who couldn't come may turn up a cart a minute later.
+  bool canAnswer(String memberId) => isOpen && isTarget(memberId);
+
+  /// Whether [memberId] can mark the cart as out front — the driver, once
+  /// they've claimed it and before they've got there.
+  bool canMarkArrived(String memberId) =>
+      status == RideStatus.accepted && isDriver(memberId);
+
+  /// Whether [memberId] can close the ride out. The hand-off happens in person,
+  /// so either end of it can say so.
+  bool canMarkDelivered(String memberId) =>
+      status == RideStatus.arrived &&
+      (isDriver(memberId) || passenger.id == memberId);
+
   factory Ride.fromJson(Map<String, dynamic> json) => Ride(
     id: json['id'] as String,
     groupId: json['group_id'] as String,
     status: json['status'] as String,
     passenger: MemberRef.fromJson(json['passenger'] as Map<String, dynamic>),
+    driver: json['driver'] == null
+        ? null
+        : MemberRef.fromJson(json['driver'] as Map<String, dynamic>),
     targets: ((json['targets'] as List<dynamic>?) ?? const [])
         .map((m) => MemberRef.fromJson(m as Map<String, dynamic>))
+        .toList(),
+    responses: ((json['responses'] as List<dynamic>?) ?? const [])
+        .map((r) => RideResponse.fromJson(r as Map<String, dynamic>))
+        .whereType<RideResponse>()
         .toList(),
     pickup: Place.fromJson(json['pickup'] as Map<String, dynamic>),
     dropoff: Place.fromJson(json['dropoff'] as Map<String, dynamic>),
