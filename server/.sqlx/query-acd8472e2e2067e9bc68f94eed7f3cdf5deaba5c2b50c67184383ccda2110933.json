@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT member_id FROM ride_party_members WHERE ride_id = ? AND member_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "member_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "acd8472e2e2067e9bc68f94eed7f3cdf5deaba5c2b50c67184383ccda2110933"
+}

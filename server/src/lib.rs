@@ -2,9 +2,10 @@
 //!
 //! Scope so far: create a group (creator = admin), join a group with name +
 //! phone (re-attach by phone), bearer-token auth on every authenticated request,
-//! the group's curated places, requesting a ride as a direct ping to one member,
-//! and the group-visible feed of those rides. The rest of the ride lifecycle
-//! (accepting, arriving, delivering), SSE, push and points come later.
+//! the group's curated places, requesting a ride as a direct ping to a set of
+//! members, the group-visible feed of those rides, and the ride lifecycle the
+//! people pinged drive — answering the ping, claiming the ride, arriving,
+//! delivering — with every step audited. SSE, push and points come later.
 //!
 //! The app is built by [`build_app`] from a [`SqlitePool`], so tests can drive
 //! the exact same router against a throwaway database without a live server.
@@ -35,6 +36,10 @@ pub fn build_app(pool: SqlitePool) -> Router {
         .route("/groups/{group_id}/feed", get(routes::feed))
         .route("/groups/{group_id}/members", get(routes::roster))
         .route("/groups/{group_id}/rides", post(routes::create_ride))
+        .route(
+            "/groups/{group_id}/rides/{ride_id}/actions",
+            post(routes::ride_action),
+        )
         .route(
             "/groups/{group_id}/places",
             get(routes::list_places).post(routes::create_place),

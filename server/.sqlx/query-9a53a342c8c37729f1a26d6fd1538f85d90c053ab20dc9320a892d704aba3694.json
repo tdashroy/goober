@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO rides (\n            id, group_id, passenger_id, pickup_id, dropoff_id,\n            party_size, offer, scheduled_for, status\n        )\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "9a53a342c8c37729f1a26d6fd1538f85d90c053ab20dc9320a892d704aba3694"
+}

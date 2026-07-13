@@ -20,6 +20,11 @@ pub enum AppError {
     #[error("forbidden")]
     Forbidden,
 
+    /// The request was fine, but the resource has moved on: the ride is already
+    /// claimed, or the step asked for isn't the one that comes next.
+    #[error("{0}")]
+    Conflict(String),
+
     #[error("{0} not found")]
     NotFound(&'static str),
 
@@ -34,6 +39,7 @@ impl AppError {
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Db(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

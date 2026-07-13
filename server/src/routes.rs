@@ -14,7 +14,9 @@ use crate::error::{AppError, AppResult};
 use crate::models::{
     AuthResponse, CopyPlacesRequest, CreateGroupRequest, CreateRideRequest, FeedResponse,
     JoinGroupRequest, Member, MemberRef, MemberView, Place, PlaceRequest, PlaceView,
-    PlacesResponse, RideView, RosterMember, RosterResponse, MAX_PARTY_SIZE,
+    PlacesResponse, RideAction, RideActionRequest, RideResponseView, RideView, RosterMember,
+    RosterResponse, MAX_PARTY_SIZE, RIDE_ACCEPTED, RIDE_ARRIVED, RIDE_DELIVERED,
+    RIDE_EVENT_REQUESTED, RIDE_OPEN,
 };
 
 /// Liveness check — a client can ping this to confirm it can reach the server.
@@ -506,7 +508,7 @@ pub async fn create_ride(
             id, group_id, passenger_id, pickup_id, dropoff_id,
             party_size, offer, scheduled_for, status
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         ride_id,
         group_id,
@@ -516,9 +518,13 @@ pub async fn create_ride(
         req.party_size,
         offer,
         scheduled_for,
+        RIDE_OPEN,
     )
     .execute(&mut *tx)
     .await?;
+
+    // A ride's history starts here, with the asking.
+    record_ride_event(&mut tx, &ride_id, &member.id, RIDE_EVENT_REQUESTED, None).await?;
 
     for target_member_id in &target_ids {
         sqlx::query!(
@@ -549,6 +555,340 @@ pub async fn create_ride(
         .ok_or(AppError::NotFound("ride"))
 }
 
+/// `POST /groups/{group_id}/rides/{ride_id}/actions` — move a ride along.
+///
+/// One endpoint for the whole lifecycle, because it is one rule: a ride is
+/// `open`, then `accepted`, then `arrived`, then `delivered`, and each step is
+/// legal only from the step before it and only for the right person. The server
+/// is the one that knows both, so the app asks — it never asserts.
+///
+/// - The four answers (`on_my_way`, `cant_right_now`, `no_cart`,
+///   `someone_else`) are for the people **pinged**, while the ride is still
+///   going begging. `on_my_way` **claims** it: the first of them to say it
+///   becomes the driver, and everyone else's tap comes back as taken.
+/// - `arrived` is the **driver's**, once they've claimed it.
+/// - `delivered` is **either** the driver's or the passenger's — whoever gets to
+///   it first when the cart pulls up.
+///
+/// Every step, legal and taken, is written to the ride's audit trail.
+pub async fn ride_action(
+    State(pool): State<SqlitePool>,
+    CurrentMember(member): CurrentMember,
+    Path((group_id, ride_id)): Path<(String, String)>,
+    Json(req): Json<RideActionRequest>,
+) -> AppResult<Json<RideView>> {
+    require_group_member(&member, &group_id)?;
+
+    let ride = sqlx::query!(
+        r#"
+        SELECT
+            id           AS "id!: String",
+            passenger_id AS "passenger_id!: String",
+            driver_id    AS "driver_id?: String",
+            status       AS "status!: String"
+        FROM rides
+        WHERE id = ? AND group_id = ?
+        "#,
+        ride_id,
+        group_id,
+    )
+    .fetch_optional(&pool)
+    .await?
+    .ok_or(AppError::NotFound("ride"))?;
+
+    let action = req.action;
+    let person_id = resolve_named_person(
+        &pool,
+        &group_id,
+        &ride_id,
+        &member.id,
+        &ride.passenger_id,
+        action,
+        req.person_id.as_deref(),
+    )
+    .await?;
+
+    // Who may take this step, and from where. Both are the server's call.
+    match action {
+        RideAction::OnMyWay
+        | RideAction::CantRightNow
+        | RideAction::NoCart
+        | RideAction::SomeoneElse => {
+            // Only the people asked get a say — an answer from anyone else isn't
+            // an answer to anything.
+            if !is_ride_target(&pool, &ride_id, &member.id).await? {
+                return Err(AppError::Forbidden);
+            }
+            // Once a ride is claimed it is off the market, so there is nothing
+            // left for the others to answer.
+            if ride.status != RIDE_OPEN {
+                return Err(already_taken(&ride.status));
+            }
+        }
+        // Where the ride *is* is checked before who is asking, so a step taken
+        // out of order says so — "nobody has taken this ride yet" — rather than
+        // reading as a locked door.
+        RideAction::Arrived => {
+            if ride.status != RIDE_ACCEPTED {
+                return Err(AppError::Conflict(
+                    if ride.status == RIDE_OPEN {
+                        "nobody has taken this ride yet"
+                    } else {
+                        "this ride is already past the pickup"
+                    }
+                    .to_string(),
+                ));
+            }
+            // Only the person who claimed the ride is at the pickup.
+            if ride.driver_id.as_deref() != Some(member.id.as_str()) {
+                return Err(AppError::Forbidden);
+            }
+        }
+        RideAction::Delivered => {
+            if ride.status != RIDE_ARRIVED {
+                return Err(AppError::Conflict(
+                    if ride.status == RIDE_DELIVERED {
+                        "this ride is already finished"
+                    } else {
+                        "the driver isn't at the pickup yet"
+                    }
+                    .to_string(),
+                ));
+            }
+            // The hand-off happens in person, so either end of it can say so —
+            // whoever reaches for their phone first.
+            let is_driver = ride.driver_id.as_deref() == Some(member.id.as_str());
+            if !is_driver && member.id != ride.passenger_id {
+                return Err(AppError::Forbidden);
+            }
+        }
+    }
+
+    // One transaction: the ride moves, the answer is recorded, and the audit
+    // trail gains a step — together, or not at all.
+    let mut tx = pool.begin().await?;
+
+    // Each status change is written as a guarded update — it only lands if the
+    // ride is still where the checks above found it. That makes the claim atomic
+    // without a lock: two people tapping "on my way" at the same moment both try
+    // to move it off `open`, and the loser's update touches no rows.
+    let moved = match action {
+        RideAction::OnMyWay => Some(
+            sqlx::query!(
+                "UPDATE rides SET driver_id = ?, status = ? WHERE id = ? AND status = ?",
+                member.id,
+                RIDE_ACCEPTED,
+                ride_id,
+                RIDE_OPEN,
+            )
+            .execute(&mut *tx)
+            .await?
+            .rows_affected(),
+        ),
+        RideAction::Arrived => Some(
+            sqlx::query!(
+                "UPDATE rides SET status = ? WHERE id = ? AND status = ?",
+                RIDE_ARRIVED,
+                ride_id,
+                RIDE_ACCEPTED,
+            )
+            .execute(&mut *tx)
+            .await?
+            .rows_affected(),
+        ),
+        RideAction::Delivered => Some(
+            sqlx::query!(
+                "UPDATE rides SET status = ? WHERE id = ? AND status = ?",
+                RIDE_DELIVERED,
+                ride_id,
+                RIDE_ARRIVED,
+            )
+            .execute(&mut *tx)
+            .await?
+            .rows_affected(),
+        ),
+        // A "no" doesn't move the ride: it stays open for whoever else was
+        // asked. It is still guarded like the moves, though — recorded only if
+        // the ride is still open when the write lands — so an answer racing a
+        // claim can't be recorded against a ride that's already taken.
+        RideAction::CantRightNow | RideAction::NoCart | RideAction::SomeoneElse => {
+            let still_open = sqlx::query!(
+                "UPDATE rides SET status = status WHERE id = ? AND status = ?",
+                ride_id,
+                RIDE_OPEN,
+            )
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if still_open == 0 {
+                let now = sqlx::query!(
+                    r#"SELECT status AS "status!: String" FROM rides WHERE id = ?"#,
+                    ride_id,
+                )
+                .fetch_one(&mut *tx)
+                .await?;
+                return Err(already_taken(&now.status));
+            }
+            None
+        }
+    };
+    if moved == Some(0) {
+        return Err(AppError::Conflict(
+            "someone else got there first".to_string(),
+        ));
+    }
+
+    if action.is_response() {
+        let response = action.as_str();
+        // Answering again replaces the earlier answer: someone who couldn't come
+        // may turn up a cart a minute later, and the last word is the true one.
+        sqlx::query!(
+            r#"
+            INSERT INTO ride_responses (ride_id, member_id, response, person_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (ride_id, member_id) DO UPDATE SET
+                response = excluded.response,
+                person_id = excluded.person_id
+            "#,
+            ride_id,
+            member.id,
+            response,
+            person_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    record_ride_event(
+        &mut tx,
+        &ride_id,
+        &member.id,
+        action.as_str(),
+        person_id.as_deref(),
+    )
+    .await?;
+
+    tx.commit().await?;
+
+    load_rides(&pool, &group_id, Some(&ride_id))
+        .await?
+        .pop()
+        .map(Json)
+        .ok_or(AppError::NotFound("ride"))
+}
+
+/// The ride is no longer on offer, so there's nothing for the people pinged to
+/// answer.
+fn already_taken(status: &str) -> AppError {
+    AppError::Conflict(
+        if status == RIDE_DELIVERED {
+            "this ride is already finished"
+        } else {
+            "someone else already took this ride"
+        }
+        .to_string(),
+    )
+}
+
+/// Resolve the person an answer names — the lead who took the cart, or the
+/// driver coming instead — and reject the answers that name the wrong person, or
+/// nobody, or somebody when they shouldn't.
+///
+/// A named person is always a **member** of the group, never typed-in text, so
+/// the passenger can ping them with one tap.
+async fn resolve_named_person(
+    pool: &SqlitePool,
+    group_id: &str,
+    ride_id: &str,
+    responder_id: &str,
+    passenger_id: &str,
+    action: RideAction,
+    person_id: Option<&str>,
+) -> AppResult<Option<String>> {
+    match (action, optional_field(person_id)) {
+        // "Someone else will come" is only useful if it says who.
+        (RideAction::SomeoneElse, None) => {
+            Err(AppError::BadRequest("say who's coming instead".to_string()))
+        }
+        (RideAction::NoCart | RideAction::SomeoneElse, Some(named)) => {
+            let named = require_group_member_id(pool, group_id, &named).await?;
+            if named == responder_id {
+                return Err(AppError::BadRequest(
+                    "that's you — name somebody else".to_string(),
+                ));
+            }
+            if named == passenger_id {
+                return Err(AppError::BadRequest(
+                    "that's the person asking for the ride".to_string(),
+                ));
+            }
+            // Someone tagged as riding along can't also be the one driving out —
+            // and the passenger asks a named person by pinging them on a fresh
+            // request that carries the same party, so a rider-as-driver would
+            // dead-end there anyway.
+            let riding_along = sqlx::query!(
+                "SELECT member_id FROM ride_party_members WHERE ride_id = ? AND member_id = ?",
+                ride_id,
+                named,
+            )
+            .fetch_optional(pool)
+            .await?
+            .is_some();
+            if riding_along {
+                return Err(AppError::BadRequest(
+                    "they're riding with the passenger — name somebody who could drive".to_string(),
+                ));
+            }
+            Ok(Some(named))
+        }
+        // The other answers name nobody, so a name in one of them is a mix-up
+        // rather than something to quietly drop.
+        (_, Some(_)) => Err(AppError::BadRequest(
+            "that answer doesn't name anybody".to_string(),
+        )),
+        (_, None) => Ok(None),
+    }
+}
+
+/// Whether a member is one of the people this ride pinged.
+async fn is_ride_target(pool: &SqlitePool, ride_id: &str, member_id: &str) -> AppResult<bool> {
+    Ok(sqlx::query!(
+        "SELECT ride_id FROM ride_targets WHERE ride_id = ? AND member_id = ?",
+        ride_id,
+        member_id,
+    )
+    .fetch_optional(pool)
+    .await?
+    .is_some())
+}
+
+/// Append one step to a ride's audit trail. Every ride is written this way — the
+/// asking, each answer, the claim, the arrival, the close — so the story of a
+/// ride outlives the row that says where it currently is.
+async fn record_ride_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    ride_id: &str,
+    actor_id: &str,
+    kind: &str,
+    person_id: Option<&str>,
+) -> AppResult<()> {
+    let id = Uuid::new_v4().to_string();
+    sqlx::query!(
+        r#"
+        INSERT INTO ride_events (id, ride_id, actor_id, kind, person_id)
+        VALUES (?, ?, ?, ?, ?)
+        "#,
+        id,
+        ride_id,
+        actor_id,
+        kind,
+        person_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Load a group's rides as the feed shows them, newest first — joined to the
 /// people and places they name so a client renders a ride from one payload.
 ///
@@ -561,6 +901,7 @@ async fn load_rides(
 ) -> AppResult<Vec<RideView>> {
     let mut targets = load_ride_targets(pool, group_id, ride_id).await?;
     let mut party = load_ride_party(pool, group_id, ride_id).await?;
+    let mut responses = load_ride_responses(pool, group_id, ride_id).await?;
 
     let rows = sqlx::query!(
         r#"
@@ -574,6 +915,8 @@ async fn load_rides(
             r.created_at    AS "created_at!: String",
             passenger.id           AS "passenger_id!: String",
             passenger.display_name AS "passenger_name!: String",
+            driver.id           AS "driver_id?: String",
+            driver.display_name AS "driver_name?: String",
             pickup.id   AS "pickup_id!: String",
             pickup.name AS "pickup_name!: String",
             pickup.lat  AS "pickup_lat!: f64",
@@ -584,6 +927,7 @@ async fn load_rides(
             dropoff.lng  AS "dropoff_lng!: f64"
         FROM rides r
         JOIN members passenger ON passenger.id = r.passenger_id
+        LEFT JOIN members driver ON driver.id = r.driver_id
         JOIN places pickup ON pickup.id = r.pickup_id
         JOIN places dropoff ON dropoff.id = r.dropoff_id
         WHERE r.group_id = ? AND (?2 IS NULL OR r.id = ?2)
@@ -599,6 +943,7 @@ async fn load_rides(
         .into_iter()
         .map(|r| RideView {
             targets: targets.remove(&r.id).unwrap_or_default(),
+            responses: responses.remove(&r.id).unwrap_or_default(),
             party: party.remove(&r.id).unwrap_or_default(),
             id: r.id,
             group_id: r.group_id,
@@ -607,6 +952,8 @@ async fn load_rides(
                 id: r.passenger_id,
                 display_name: r.passenger_name,
             },
+            // Nobody is driving until somebody claims it.
+            driver: member_ref(r.driver_id, r.driver_name),
             pickup: PlaceView {
                 id: r.pickup_id,
                 group_id: group_id.to_string(),
@@ -663,6 +1010,67 @@ async fn load_ride_targets(
         });
     }
     Ok(targets)
+}
+
+/// What the people pinged have said back, keyed by ride id — the current answer
+/// from each of them, by name.
+///
+/// An answer may point at somebody (the person who took the cart, or the person
+/// coming instead), so it comes back with that person joined in: the passenger
+/// taps them and asks them for a ride, which is the whole reason a lead is a
+/// person and not a sentence.
+async fn load_ride_responses(
+    pool: &SqlitePool,
+    group_id: &str,
+    ride_id: Option<&str>,
+) -> AppResult<HashMap<String, Vec<RideResponseView>>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            rr.ride_id       AS "ride_id!: String",
+            rr.response      AS "response!: String",
+            m.id             AS "member_id!: String",
+            m.display_name   AS "display_name!: String",
+            person.id            AS "person_id?: String",
+            person.display_name  AS "person_name?: String"
+        FROM ride_responses rr
+        JOIN rides r ON r.id = rr.ride_id
+        JOIN members m ON m.id = rr.member_id
+        LEFT JOIN members person ON person.id = rr.person_id
+        WHERE r.group_id = ? AND (?2 IS NULL OR r.id = ?2)
+        ORDER BY m.display_name
+        "#,
+        group_id,
+        ride_id,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut responses: HashMap<String, Vec<RideResponseView>> = HashMap::new();
+    for row in rows {
+        responses
+            .entry(row.ride_id)
+            .or_default()
+            .push(RideResponseView {
+                member: MemberRef {
+                    id: row.member_id,
+                    display_name: row.display_name,
+                },
+                response: row.response,
+                person: member_ref(row.person_id, row.person_name),
+            });
+    }
+    Ok(responses)
+}
+
+/// A person a ride names only sometimes — the driver, a lead, a delegate. Both
+/// halves come from the same outer join, so they are either both there or both
+/// absent.
+fn member_ref(id: Option<String>, display_name: Option<String>) -> Option<MemberRef> {
+    Some(MemberRef {
+        id: id?,
+        display_name: display_name?,
+    })
 }
 
 /// The tagged riders on each of a group's rides, keyed by ride id.
