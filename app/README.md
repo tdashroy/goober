@@ -10,6 +10,17 @@ the whole group, and the feed keeps itself fresh: it quietly refetches every
 30 seconds (swapping new rides in without a spinner; a failed poll leaves the
 board alone) and can be pulled to refresh, even from the empty state.
 
+The ride is then driven from its card on that same board, and what the card
+offers depends on who is looking at it. Someone who was **pinged**, while the
+ride is still going begging, gets four buttons — *On my way* (which claims it:
+first one there wins), *Can't right now*, *I don't have a cart*, *Someone else
+will come*. The last two name a person from the roster, which is what makes them
+useful: the passenger taps the person named and asks *them* for the same ride, in
+one tap. Once the ride is claimed the card says who's driving; the driver gets
+*I'm here*, and then the driver and the passenger both get *Delivered 🎉*. The
+server decides whether any of it is allowed — the app asks, it never asserts —
+so a refusal ("someone else already took this ride") is shown as it comes.
+
 ## Run on the Android emulator
 
 1. Start the server (see `../server/README.md`), bound to `0.0.0.0:8080`.
@@ -64,9 +75,11 @@ flutter test        # widget + unit tests, headless — no emulator needed
 
 - `test/token_store_test.dart` — bearer-token persistence.
 - `test/feed_screen_test.dart` — empty-feed render, ride cards (route, party
-  size, offer, timing), auto-refresh and pull-to-refresh behavior, "Get a ride"
-  opening the request flow, and the labeled app-bar entries: Places for every
-  member, Admin for admins only, and where each leads.
+  size, offer, timing), the ride lifecycle from the card (the response menu for a
+  pinged member, claiming, arriving, delivering as driver or passenger, and
+  tapping a lead to ask that person instead), auto-refresh and pull-to-refresh
+  behavior, "Get a ride" opening the request flow, and the labeled app-bar
+  entries: Places for every member, Admin for admins only, and where each leads.
 - `test/request_ride_screen_test.dart` — the request flow: route, party size,
   offer, now-or-scheduled, the direct ping to one member, and recovery when a
   request is rejected or the server is unreachable.
