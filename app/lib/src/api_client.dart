@@ -89,6 +89,57 @@ class ApiClient {
     return Feed.fromJson(_decode(resp));
   }
 
+  /// Fetch the group roster — everyone in the group, i.e. everyone the caller
+  /// can ping for a ride. Requires [token].
+  Future<Roster> fetchRoster({
+    required String groupId,
+    required String token,
+  }) async {
+    final resp = await _client.get(
+      Uri.parse('$baseUrl/groups/$groupId/members'),
+      headers: _authHeaders(token),
+    );
+    return Roster.fromJson(_decode(resp));
+  }
+
+  /// Request a ride from [pickupId] to [dropoffId] — both curated places — as a
+  /// ping to [targetIds], the members being asked to drive. At least one; the
+  /// server rejects an empty set, a duplicate, and the passenger themselves.
+  ///
+  /// [partySize] counts everyone riding, including the passenger (1 = "just
+  /// me"). [offer] is free text and optional. [scheduledFor] null means "now";
+  /// otherwise it must be in the future and is sent as a UTC instant, since the
+  /// server speaks UTC. [partyMemberIds] optionally tags who else is riding.
+  ///
+  /// Returns the newly created [Ride], which is `open` and visible to the whole
+  /// group in the feed.
+  Future<Ride> createRide({
+    required String groupId,
+    required String token,
+    required String pickupId,
+    required String dropoffId,
+    required List<String> targetIds,
+    int partySize = 1,
+    String? offer,
+    DateTime? scheduledFor,
+    List<String> partyMemberIds = const [],
+  }) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/groups/$groupId/rides'),
+      headers: _jsonAuthHeaders(token),
+      body: jsonEncode({
+        'pickup_id': pickupId,
+        'dropoff_id': dropoffId,
+        'target_ids': targetIds,
+        'party_size': partySize,
+        'offer': offer,
+        'scheduled_for': scheduledFor?.toUtc().toIso8601String(),
+        'party_member_ids': partyMemberIds,
+      }),
+    );
+    return Ride.fromJson(_decode(resp));
+  }
+
   /// Fetch the group's curated places. Any member may read; requires [token].
   Future<Places> fetchPlaces({
     required String groupId,
