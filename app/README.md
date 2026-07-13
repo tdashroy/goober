@@ -63,10 +63,13 @@ flutter test        # widget + unit tests, headless — no emulator needed
 - `test/token_store_test.dart` — bearer-token persistence.
 - `test/feed_screen_test.dart` — empty-feed render, ride cards (route, party
   size, offer, timing), auto-refresh and pull-to-refresh behavior, "Get a ride"
-  opening the request flow, and opening the places screen.
+  opening the request flow, and the labeled app-bar entries: Places for every
+  member, Admin for admins only, and where each leads.
 - `test/request_ride_screen_test.dart` — the request flow: route, party size,
   offer, now-or-scheduled, the direct ping to one member, and recovery when a
   request is rejected or the server is unreachable.
+- `test/admin_screen_test.dart` — the admin screen names its actions, says the
+  area is admin-only, and "Manage places" opens the places screen.
 - `test/api_client_test.dart` — request shapes, auth header, error mapping
   (groups + places + rides).
 - `test/places_screen_test.dart` — places list, admin-only add/edit/delete/copy
@@ -82,14 +85,17 @@ flutter test        # widget + unit tests, headless — no emulator needed
 - `lib/src/time_format.dart` — small dependency-free formatters for ride times
   ("6:30 PM" today, "Sat 4 Jul, 6:30 PM" otherwise) and days ("Today",
   "Tomorrow", "Sat 4 Jul").
-- `lib/src/screens/` — onboarding, feed, request-ride, and places screens. The
-  request-ride screen schedules a ride by asking for the *time*, with the day
-  defaulting to today and changeable beside it; it takes injectable
-  `pickScheduledTime` / `pickScheduledDay` callbacks so tests can drive
-  scheduling without the platform pickers. The places screen
-  lists the group's curated places for any member and, for admins, adds
-  add/edit/delete plus a thin "copy from another group" starting point.
-  Coordinates are entered as plain lat/lng for now; a drop-a-pin map picker is
-  deferred.
+- `lib/src/screens/` — onboarding, feed, request-ride, places, and admin
+  screens. The feed's app bar carries two labeled entries: **Places** (every
+  member) and **Admin** (admins only). The request-ride screen schedules a ride
+  by asking for the *time*, with the day defaulting to today and changeable
+  beside it; it takes injectable `pickScheduledTime` / `pickScheduledDay`
+  callbacks so tests can drive scheduling without the platform pickers. The
+  places screen lists the group's curated places for any member and, for
+  admins, adds add/edit/delete plus a thin "copy from another group" starting
+  point. Coordinates are entered as plain lat/lng for now; a drop-a-pin map
+  picker is deferred. The admin screen gathers the admin-only actions in one
+  labeled list ("Manage places" today); new admin features become entries there
+  rather than shortcuts elsewhere.
 - `lib/main.dart` — `GooberApp` wires an `ApiClient` + `TokenStore` (both
   injectable) and routes to onboarding or feed based on the persisted token.

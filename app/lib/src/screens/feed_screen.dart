@@ -6,6 +6,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../time_format.dart';
+import 'admin_screen.dart';
 import 'places_screen.dart';
 import 'request_ride_screen.dart';
 
@@ -115,6 +116,9 @@ class _FeedScreenState extends State<FeedScreen> {
     if (created == true && mounted) _refresh();
   }
 
+  void _open(WidgetBuilder screen) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: screen));
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -125,22 +129,36 @@ class _FeedScreenState extends State<FeedScreen> {
               : widget.session.groupName,
         ),
         actions: [
-          IconButton(
+          // Everyone can browse the group's places; the screen itself is
+          // read-only for members and gains its editing controls for admins.
+          _AppBarAction(
             key: const Key('open-places-button'),
-            icon: const Icon(Icons.place),
-            tooltip: 'Places',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => PlacesScreen(
-                    api: widget.api,
-                    session: widget.session,
-                    onUnauthenticated: widget.onUnauthenticated,
-                  ),
-                ),
-              );
-            },
+            icon: Icons.place_outlined,
+            label: 'Places',
+            onPressed: () => _open(
+              (_) => PlacesScreen(
+                api: widget.api,
+                session: widget.session,
+                onUnauthenticated: widget.onUnauthenticated,
+              ),
+            ),
           ),
+          // Admins additionally get one labeled door into everything they can
+          // administer. A bare icon read as neither "administration" nor
+          // "admin-only", so it says so in words, and members never see it.
+          if (widget.session.member.isAdmin)
+            _AppBarAction(
+              key: const Key('open-admin-button'),
+              icon: Icons.shield_outlined,
+              label: 'Admin',
+              onPressed: () => _open(
+                (_) => AdminScreen(
+                  api: widget.api,
+                  session: widget.session,
+                  onUnauthenticated: widget.onUnauthenticated,
+                ),
+              ),
+            ),
         ],
       ),
       body: Column(
@@ -182,6 +200,34 @@ class _FeedScreenState extends State<FeedScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         itemCount: feed.rides.length,
         itemBuilder: (context, i) => RideCard(ride: feed.rides[i]),
+      ),
+    );
+  }
+}
+
+/// An app-bar destination that says in words where it goes. Icon-only actions
+/// left people guessing what they opened, so every entry here carries a label.
+class _AppBarAction extends StatelessWidget {
+  const _AppBarAction({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: TextButton.icon(
+        icon: Icon(icon),
+        label: Text(label),
+        style: TextButton.styleFrom(foregroundColor: GooberColors.ink),
+        onPressed: onPressed,
       ),
     );
   }

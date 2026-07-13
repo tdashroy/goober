@@ -22,6 +22,13 @@ Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (created lazily;
   messages.** Describe *what* the code does and *why* in place — the output must
   stand on its own. Read the issue/PRD for context, but don't cite issue numbers,
   "the PRD", or tracker labels in committed artifacts.
+- **Admin-only features hang off the Admin screen** (`app/lib/src/screens/admin_screen.dart`),
+  reached from the labeled admin entry point in the feed's app bar. Add a new
+  admin feature as an entry in that screen's action list rather than giving it
+  its own shortcut elsewhere — a bare, unlabeled shortcut reads as neither
+  "administration" nor "admin-only" and members should never be shown a control
+  they cannot use. Client-side gating is for clarity only; the server enforces
+  admin permissions regardless.
 
 ## Development
 

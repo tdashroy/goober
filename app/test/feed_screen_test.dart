@@ -6,11 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:goober/src/api_client.dart';
 import 'package:goober/src/models.dart';
 import 'package:goober/src/screens/feed_screen.dart';
+import 'package:goober/src/screens/places_screen.dart';
 import 'package:goober/src/theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-Session _session() => const Session(
+Session _session({bool isAdmin = true}) => Session(
   token: 'tok-abc',
   groupId: 'g1',
   groupName: 'Beach 2027',
@@ -19,7 +20,7 @@ Session _session() => const Session(
     groupId: 'g1',
     displayName: 'Troy',
     phone: '5551112222',
-    isAdmin: true,
+    isAdmin: isAdmin,
   ),
 );
 
@@ -80,6 +81,18 @@ ApiClient _feedApi(List<Map<String, dynamic>> rides) {
   return ApiClient(baseUrl: 'http://test', client: client);
 }
 
+/// Serves an empty feed, and an empty places list for the screens reachable
+/// from it.
+ApiClient _emptyFeedApi() {
+  final client = MockClient((req) async {
+    if (req.url.path.endsWith('/places')) {
+      return _json({'group_id': 'g1', 'places': []});
+    }
+    return _json({'group_id': 'g1', 'group_name': 'Beach 2027', 'rides': []});
+  });
+  return ApiClient(baseUrl: 'http://test', client: client);
+}
+
 /// Serves the feed plus the places + roster the request screen loads, so a test
 /// can tap through from the feed and land on a live form.
 ApiClient _feedAndRequestApi(List<Map<String, dynamic>> rides) {
@@ -116,6 +129,15 @@ Future<void> _pumpFeed(WidgetTester tester, ApiClient api) async {
   );
   await tester.pumpAndSettle();
 }
+
+Widget _harness(Session session) => MaterialApp(
+  theme: buildGooberTheme(),
+  home: FeedScreen(
+    api: _emptyFeedApi(),
+    session: session,
+    onUnauthenticated: () {},
+  ),
+);
 
 void main() {
   testWidgets('renders the empty feed state and the Get a ride button', (
@@ -356,13 +378,63 @@ void main() {
     expect(calls, 1);
   });
 
-  testWidgets('the Places button opens the places screen', (tester) async {
-    await _pumpFeed(tester, _feedApi([]));
+  testWidgets('admins get a labeled Admin entry point', (tester) async {
+    await tester.pumpWidget(_harness(_session(isAdmin: true)));
+    await tester.pumpAndSettle();
+
+    // Labeled in words, not a bare icon.
+    expect(find.byKey(const Key('open-admin-button')), findsOneWidget);
+    expect(find.text('Admin'), findsOneWidget);
+  });
+
+  testWidgets('members see no admin entry point', (tester) async {
+    await tester.pumpWidget(_harness(_session(isAdmin: false)));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('open-admin-button')), findsNothing);
+    expect(find.text('Admin'), findsNothing);
+  });
+
+  testWidgets('every member gets a labeled Places entry', (tester) async {
+    for (final isAdmin in [true, false]) {
+      await tester.pumpWidget(_harness(_session(isAdmin: isAdmin)));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('open-places-button')), findsOneWidget);
+      expect(find.text('Places'), findsOneWidget);
+    }
+  });
+
+  testWidgets('a member browses places read-only from the feed', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_harness(_session(isAdmin: false)));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const Key('open-places-button')));
     await tester.pumpAndSettle();
 
-    // Landed on the Places screen (app bar title).
-    expect(find.text('Places'), findsOneWidget);
+    // Landed on the places screen, with no editing controls for a member.
+    expect(find.byType(PlacesScreen), findsOneWidget);
+    expect(find.byKey(const Key('add-place-button')), findsNothing);
+    expect(find.byKey(const Key('places-menu-button')), findsNothing);
+  });
+
+  testWidgets('the Admin entry leads on to places management', (tester) async {
+    await tester.pumpWidget(_harness(_session(isAdmin: true)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('open-admin-button')));
+    await tester.pumpAndSettle();
+
+    // Landed on the admin screen, which offers the admin actions by name.
+    expect(find.text('Manage places'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('manage-places-action')));
+    await tester.pumpAndSettle();
+
+    // ...and on to the places screen, with the admin's editing controls.
+    expect(find.byType(PlacesScreen), findsOneWidget);
+    expect(find.byKey(const Key('add-place-button')), findsOneWidget);
   });
 }
