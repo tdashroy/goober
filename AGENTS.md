@@ -75,6 +75,11 @@ in `server/README.md` and `app/README.md`.
 - **Widget tests and lazy lists:** a `ListView` only builds what fits the 800×600
   test viewport, so fields below the fold aren't found. Give such a test a tall
   surface (`tester.binding.setSurfaceSize`) rather than scrolling step by step.
+- **One screen per widget test.** Re-pumping the same screen with different data
+  (a second `pumpWidget` of the same widget type) *reuses* the existing `State`,
+  so `initState` never runs again and the screen keeps what it fetched the first
+  time — the assertions then quietly test the old world. Two scenarios mean two
+  `testWidgets`.
 
 ### Containerized dev environment
 
