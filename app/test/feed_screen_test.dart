@@ -33,7 +33,25 @@ Map<String, dynamic> _place(String id, String name) => {
   'lng': -75.1,
 };
 
+Map<String, dynamic> _ref(String id, String name) => {
+  'id': id,
+  'display_name': name,
+};
+
+/// The person looking at the board — the session's own member.
+Map<String, dynamic> _viewer() => _ref('m1', 'Troy');
+
+/// What one pinged member said back, as the feed sends it.
+Map<String, dynamic> _response(String who, String said, {String? named}) => {
+  'member': _ref('t-$who', who),
+  'response': said,
+  'person': named == null ? null : _ref('t-$named', named),
+};
+
 /// A ride as the feed receives it from the server.
+///
+/// [asksViewer] pings the person looking at the board (so they get the response
+/// menu) and [fromViewer] makes the ride theirs (so a lead is theirs to act on).
 Map<String, dynamic> _ride({
   String id = 'r1',
   String passenger = 'Emily',
@@ -44,13 +62,21 @@ Map<String, dynamic> _ride({
   String? offer,
   String? scheduledFor,
   List<String> party = const [],
+  String status = 'open',
+  bool fromViewer = false,
+  bool asksViewer = false,
+  Map<String, dynamic>? driver,
+  List<Map<String, dynamic>> responses = const [],
 }) => {
   'id': id,
   'group_id': 'g1',
-  'status': 'open',
-  'passenger': {'id': 'p-$passenger', 'display_name': passenger},
+  'status': status,
+  'passenger': fromViewer ? _viewer() : _ref('p-$passenger', passenger),
+  'driver': driver,
+  'responses': responses,
   'targets': [
-    for (final name in targets) {'id': 't-$name', 'display_name': name},
+    for (final name in targets) _ref('t-$name', name),
+    if (asksViewer) _viewer(),
   ],
   'pickup': _place('p1', pickup),
   'dropoff': _place('p2', dropoff),
@@ -114,6 +140,61 @@ ApiClient _feedAndRequestApi(List<Map<String, dynamic>> rides) {
     });
   });
   return ApiClient(baseUrl: 'http://test', client: client);
+}
+
+/// A board that answers the feed, the roster and the steps the card posts back
+/// — and remembers what was posted, since that's the thing under test: the card
+/// asks the server to move the ride, it never moves it itself.
+class _Board {
+  _Board(this.rides, {this.afterPost, this.postStatus = 200, this.error});
+
+  /// What the board shows. Swapped for [afterPost] once a step is posted, which
+  /// is how the server's answer lands back on the board.
+  List<Map<String, dynamic>> rides;
+  final List<Map<String, dynamic>>? afterPost;
+
+  /// A step the server refuses — "someone else already took this ride".
+  final int postStatus;
+  final String? error;
+
+  /// Every step the card posted, as (path, body).
+  final List<(String, Map<String, dynamic>)> posts = [];
+
+  late final ApiClient api = ApiClient(
+    baseUrl: 'http://test',
+    client: MockClient(_handle),
+  );
+
+  Future<http.Response> _handle(http.Request req) async {
+    if (req.method == 'POST') {
+      posts.add((req.url.path, jsonDecode(req.body) as Map<String, dynamic>));
+      if (error != null) {
+        return http.Response.bytes(
+          utf8.encode(jsonEncode({'error': error})),
+          postStatus,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (afterPost != null) rides = afterPost!;
+      // The card ignores the ride it gets back and refetches the board, but the
+      // client still parses it, so it has to be a real one.
+      return _json(rides.first);
+    }
+    if (req.url.path.endsWith('/members')) {
+      return _json({
+        'group_id': 'g1',
+        'members': [
+          {'id': 't-Wendel', 'display_name': 'Wendel', 'is_admin': false},
+          {'id': 't-Susan', 'display_name': 'Susan', 'is_admin': false},
+        ],
+      });
+    }
+    return _json({
+      'group_id': 'g1',
+      'group_name': 'Beach 2027',
+      'rides': rides,
+    });
+  }
 }
 
 Future<void> _pumpFeed(
@@ -371,6 +452,206 @@ void main() {
     await tester.pump(FeedScreen.autoRefreshInterval * 2);
 
     expect(calls, 1);
+  });
+
+  // --- the ride lifecycle, from the card ---
+
+  testWidgets('a pinged member gets the four-option menu', (tester) async {
+    await _pumpFeed(tester, _feedApi([_ride(asksViewer: true)]));
+
+    expect(find.byKey(const Key('ride-on-my-way-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ride-cant-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ride-no-cart-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ride-someone-else-r1')), findsOneWidget);
+  });
+
+  testWidgets('a ride that asked somebody else is one you only watch', (
+    tester,
+  ) async {
+    await _pumpFeed(tester, _feedApi([_ride()]));
+
+    expect(find.byKey(const Key('ride-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ride-on-my-way-r1')), findsNothing);
+    expect(find.byKey(const Key('ride-cant-r1')), findsNothing);
+    expect(find.byKey(const Key('ride-no-cart-r1')), findsNothing);
+    expect(find.byKey(const Key('ride-someone-else-r1')), findsNothing);
+  });
+
+  testWidgets('"On my way" claims the ride and the board says who is driving', (
+    tester,
+  ) async {
+    final board = _Board(
+      [_ride(asksViewer: true)],
+      afterPost: [
+        _ride(
+          asksViewer: true,
+          status: 'accepted',
+          driver: _viewer(),
+          responses: [
+            {'member': _viewer(), 'response': 'on_my_way', 'person': null},
+          ],
+        ),
+      ],
+    );
+    await _pumpFeed(tester, board.api);
+
+    await tester.tap(find.byKey(const Key('ride-on-my-way-r1')));
+    await tester.pumpAndSettle();
+
+    expect(board.posts.single.$1, '/groups/g1/rides/r1/actions');
+    expect(board.posts.single.$2['action'], 'on_my_way');
+
+    // The board comes back claimed: the menu is gone, and the ride says so.
+    expect(find.byKey(const Key('ride-on-my-way-r1')), findsNothing);
+    expect(find.text('Troy is on the way'), findsOneWidget);
+    // And the driver has the one thing left to do.
+    expect(find.byKey(const Key('ride-arrived-r1')), findsOneWidget);
+  });
+
+  testWidgets('a ride somebody else claimed first comes back as taken', (
+    tester,
+  ) async {
+    final board = _Board(
+      [_ride(asksViewer: true)],
+      postStatus: 409,
+      error: 'someone else already took this ride',
+    );
+    await _pumpFeed(tester, board.api);
+
+    await tester.tap(find.byKey(const Key('ride-on-my-way-r1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('someone else already took this ride'), findsOneWidget);
+  });
+
+  testWidgets('the driver marks the arrival, then closes the ride out', (
+    tester,
+  ) async {
+    final board = _Board(
+      [_ride(asksViewer: true, status: 'accepted', driver: _viewer())],
+      afterPost: [
+        _ride(asksViewer: true, status: 'arrived', driver: _viewer()),
+      ],
+    );
+    await _pumpFeed(tester, board.api);
+
+    expect(find.text('Troy is on the way'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-arrived-r1')));
+    await tester.pumpAndSettle();
+
+    expect(board.posts.single.$2['action'], 'arrived');
+    expect(find.text('Troy is here'), findsOneWidget);
+    expect(find.byKey(const Key('ride-delivered-r1')), findsOneWidget);
+  });
+
+  testWidgets('the passenger can close the ride out too', (tester) async {
+    final board = _Board(
+      [
+        _ride(
+          fromViewer: true,
+          status: 'arrived',
+          driver: _ref('t-Wendel', 'Wendel'),
+        ),
+      ],
+      afterPost: [
+        _ride(
+          fromViewer: true,
+          status: 'delivered',
+          driver: _ref('t-Wendel', 'Wendel'),
+        ),
+      ],
+    );
+    await _pumpFeed(tester, board.api);
+
+    // Waiting at the kerb, the passenger sees the cart arrive.
+    expect(find.text('Wendel is here'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ride-delivered-r1')));
+    await tester.pumpAndSettle();
+
+    expect(board.posts.single.$2['action'], 'delivered');
+    expect(find.text('Delivered by Wendel 🎉'), findsOneWidget);
+    expect(find.byKey(const Key('ride-delivered-r1')), findsNothing);
+  });
+
+  testWidgets('a "no" says what it knows, and names who took the cart', (
+    tester,
+  ) async {
+    final board = _Board(
+      [_ride(asksViewer: true)],
+      afterPost: [
+        _ride(
+          asksViewer: true,
+          responses: [_response('Troy', 'no_cart', named: 'Susan')],
+        ),
+      ],
+    );
+    await _pumpFeed(tester, board.api);
+
+    await tester.tap(find.byKey(const Key('ride-no-cart-r1')));
+    await tester.pumpAndSettle();
+
+    // Naming who has it is picking a person, not typing a sentence.
+    expect(find.byKey(const Key('person-picker')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pick-person-t-Susan')));
+    await tester.pumpAndSettle();
+
+    expect(board.posts.single.$2['action'], 'no_cart');
+    expect(board.posts.single.$2['person_id'], 't-Susan');
+    // The ride stays open — whoever else was asked may still come.
+    expect(
+      find.text("Troy doesn't have a cart — Susan took it"),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    "a lead the passenger can't use is still a sentence they can read",
+    (tester) async {
+      // Emily's ride, Emily's lead: a bystander reads it and does nothing with it.
+      await _pumpFeed(
+        tester,
+        _feedApi([
+          _ride(responses: [_response('Wendel', 'no_cart', named: 'Susan')]),
+        ]),
+      );
+
+      expect(
+        find.text("Wendel doesn't have a cart — Susan took it"),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('ask-r1-t-Susan')), findsNothing);
+    },
+  );
+
+  testWidgets('tapping the person a lead names asks them for the same ride', (
+    tester,
+  ) async {
+    final board = _Board([
+      _ride(
+        fromViewer: true,
+        partySize: 2,
+        offer: '🍪 cookies',
+        party: ['Emily'],
+        responses: [_response('Wendel', 'someone_else', named: 'Susan')],
+      ),
+    ]);
+    await _pumpFeed(tester, board.api);
+
+    expect(find.text('Wendel says Susan will come'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('ask-r1-t-Susan')));
+    await tester.pumpAndSettle();
+
+    // One tap, and Susan is being asked for exactly the ride that was wanted.
+    final (path, body) = board.posts.single;
+    expect(path, '/groups/g1/rides');
+    expect(body['target_ids'], ['t-Susan']);
+    expect(body['pickup_id'], 'p1');
+    expect(body['dropoff_id'], 'p2');
+    expect(body['party_size'], 2);
+    expect(body['offer'], '🍪 cookies');
+    expect(body['party_member_ids'], ['m-Emily']);
+    expect(find.text('Asked Susan for a ride.'), findsOneWidget);
   });
 
   testWidgets('admins get a labeled Admin entry point', (tester) async {
