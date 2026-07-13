@@ -1,9 +1,9 @@
 # Goober server
 
-Rust backend for Goober — `axum` + SQLite via `sqlx`. This is the **walking
-skeleton**: create a group, join with name + phone, bearer-token auth,
-and an empty group feed. Runs **locally over HTTP** — cloud deployment over HTTPS
-comes later.
+Rust backend for Goober — `axum` + SQLite via `sqlx`. Create a group, join with
+name + phone, bearer-token auth, curate the group's places, request a ride, and
+read the group's shared feed. Runs **locally over HTTP** — cloud deployment over
+HTTPS comes later.
 
 ## Endpoints
 
@@ -13,7 +13,9 @@ comes later.
 | POST   | `/groups`                    | –      | Create a group; caller becomes its admin |
 | POST   | `/groups/{group_id}/join`    | –      | Join with name + phone; re-attaches by phone |
 | GET    | `/me`                        | bearer | The caller's identity |
-| GET    | `/groups/{group_id}/feed`    | bearer | Group activity feed (empty for now) |
+| GET    | `/groups/{group_id}/feed`    | bearer | Group activity feed: the group's rides, newest first |
+| GET    | `/groups/{group_id}/members` | bearer | The group roster — who you can ping for a ride |
+| POST   | `/groups/{group_id}/rides`   | bearer | Request a ride (direct ping to one member) |
 | GET    | `/groups/{group_id}/places`  | bearer | The group's curated places (any member) |
 | POST   | `/groups/{group_id}/places`  | admin  | Create a place (`name`, `lat`, `lng`) |
 | PUT    | `/groups/{group_id}/places/{place_id}` | admin | Rename / move a place |
@@ -29,6 +31,30 @@ delete, or copy — enforced server-side (non-admin mutations are rejected).
 Places are scoped to their group. The read and every mutation return the group's
 full current list as `{ group_id, places: [{ id, group_id, name, lat, lng }] }`
 so a client refreshes from one response.
+
+**Rides:** a passenger requests a ride from one curated place to another, for a
+party of 1 to 8 ("just me" by default; anything outside that range is a `400`),
+with an optional free-text `offer` (cookies, a favor, or cash — never processed,
+it's just text) and either **now** (`scheduled_for` omitted/null) or a future
+ISO-8601 time. The request is a **direct ping** to a set of members:
+`target_ids` names everyone being asked to drive — one person, or a few, so the
+passenger can ask whoever might be free. At least one is required; the passenger
+can't be among them, and naming the same person twice is a `400`. The passenger
+may also tag which members are riding along (`party_member_ids`) — a tag list,
+not a headcount, so it can be shorter than `party_size`, and nobody being asked
+to drive can be on it.
+
+Everything is group-scoped: every id in the body is resolved *within the caller's
+group*, so an id from another group reads as `404`, and a token from another
+group is `403`. A new request is `open` and immediately appears in that group's
+feed — which is shared, not personal: everyone in the group sees every ride, with
+its route, party size, and offer.
+
+**Roster:** `GET /groups/{group_id}/members` returns every member of the group
+(the caller included — the app's ping picker filters you out) as
+`{ group_id, members: [{ id, display_name, is_admin }] }`. Like the feed, it's a
+group-visible surface, so it carries no phone numbers — only your own record
+(the `member` in `POST /groups`/`join` responses and `GET /me`) includes a phone.
 
 **Identity:** the phone number is the durable identity key; the display
 name is a mutable label. Re-joining with the same phone re-attaches the same
@@ -100,5 +126,9 @@ Commit the regenerated `.sqlx/` files.
 ## Migrations
 
 Schema lives in `migrations/` and is applied via `sqlx migrate` (embedded in the
-binary and run on startup). The skeleton has just `groups` + `members`; rides,
-places, messages, etc. arrive later.
+binary and run on startup): `groups` + `members`, `places`, and `rides` +
+`ride_party_members`. Messages, IOUs and points arrive later.
+
+Times are stored as ISO-8601 UTC strings (`2027-07-04T18:30:00Z`) so they sort
+lexicographically, compare with SQLite's date functions, and parse directly in
+the client.

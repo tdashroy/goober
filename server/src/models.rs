@@ -1,8 +1,9 @@
 //! Domain rows and the JSON shapes the API speaks.
 //!
 //! A **Group** is one trip/leaderboard/trophy cycle, a **Member** is a person
-//! in a group keyed by their phone number, and a **Place** is one of the group's
-//! curated named locations (a house or landmark) with map coordinates.
+//! in a group keyed by their phone number, a **Place** is one of the group's
+//! curated named locations (a house or landmark) with map coordinates, and a
+//! **Ride** is a passenger's request to be driven from one place to another.
 
 use serde::{Deserialize, Serialize};
 
@@ -73,13 +74,31 @@ pub struct AuthResponse {
     pub member: MemberView,
 }
 
-/// The group activity feed. Empty in the walking skeleton — rides come later
-/// — but the shape is here so the app can render its empty state.
+/// The group activity feed: every ride in the group, newest first. Shared by the
+/// whole group — spectating is half the fun — so anyone in the group sees the
+/// same list.
 #[derive(Debug, Serialize)]
 pub struct FeedResponse {
     pub group_id: String,
     pub group_name: String,
-    pub rides: Vec<serde_json::Value>,
+    pub rides: Vec<RideView>,
+}
+
+/// One entry in the group roster. The roster is a group-visible surface, so —
+/// like [`MemberRef`] on the feed — it carries no phone numbers; only your own
+/// record (auth responses, `GET /me`) includes a phone.
+#[derive(Debug, Serialize)]
+pub struct RosterMember {
+    pub id: String,
+    pub display_name: String,
+    pub is_admin: bool,
+}
+
+/// The group roster: everyone the passenger can ping for a ride.
+#[derive(Debug, Serialize)]
+pub struct RosterResponse {
+    pub group_id: String,
+    pub members: Vec<RosterMember>,
 }
 
 // ----- places -----
@@ -142,4 +161,83 @@ pub struct CopyPlacesRequest {
 pub struct PlacesResponse {
     pub group_id: String,
     pub places: Vec<PlaceView>,
+}
+
+// ----- rides -----
+
+/// Party size when the passenger doesn't say otherwise: "just me".
+pub const DEFAULT_PARTY_SIZE: i64 = 1;
+
+/// The most people one request can claim. Enforced in the handler rather than
+/// the schema, so the cap can change without a migration.
+pub const MAX_PARTY_SIZE: i64 = 8;
+
+/// Ask for a ride from one curated place to another.
+///
+/// Timing is either **now** (`scheduled_for` absent/null) or a future time. The
+/// request pings a **set** of members: `target_ids` names everyone being asked
+/// to drive — one person, or a few.
+#[derive(Debug, Deserialize)]
+pub struct CreateRideRequest {
+    /// Where the passenger is getting picked up — a place in their group.
+    pub pickup_id: String,
+    /// Where they're going — a different place in their group.
+    pub dropoff_id: String,
+    /// The members being pinged to drive: a set, with at least one in it. The
+    /// passenger is not one of them, and naming the same person twice is a
+    /// mistake rather than two pings.
+    #[serde(default)]
+    pub target_ids: Vec<String>,
+    /// How many people are riding, including the passenger. An exact count:
+    /// defaults to 1, capped at [`MAX_PARTY_SIZE`].
+    #[serde(default = "default_party_size")]
+    pub party_size: i64,
+    /// Free-text thank-you — cookies, a favor, or cash. Optional; blank is None.
+    #[serde(default)]
+    pub offer: Option<String>,
+    /// A future ISO-8601 time to be picked up at. Absent/null means "now".
+    #[serde(default)]
+    pub scheduled_for: Option<String>,
+    /// Optionally, which other members are riding along. They are the party
+    /// *besides* the passenger, so there can be at most `party_size - 1` of
+    /// them, and nobody being pinged — they're being asked to drive — is one of
+    /// them.
+    #[serde(default)]
+    pub party_member_ids: Vec<String>,
+}
+
+fn default_party_size() -> i64 {
+    DEFAULT_PARTY_SIZE
+}
+
+/// A person as they appear inside a ride — just enough to show a name. The feed
+/// is a public board, so it carries no phone numbers.
+#[derive(Debug, Serialize)]
+pub struct MemberRef {
+    pub id: String,
+    pub display_name: String,
+}
+
+/// A ride as the group's feed shows it: who asked, who was pinged, the route,
+/// the party, the offer, and when it's wanted for.
+#[derive(Debug, Serialize)]
+pub struct RideView {
+    pub id: String,
+    pub group_id: String,
+    /// `open` today; a driver accepting/arriving/delivering comes later.
+    pub status: String,
+    pub passenger: MemberRef,
+    /// Everyone who was pinged, by name — always at least one. Sorted by name so
+    /// the feed reads the same to everyone.
+    pub targets: Vec<MemberRef>,
+    pub pickup: PlaceView,
+    pub dropoff: PlaceView,
+    pub party_size: i64,
+    /// The other riders the passenger tagged, if any. May be shorter than
+    /// `party_size` — tagging is optional.
+    pub party: Vec<MemberRef>,
+    pub offer: Option<String>,
+    /// `None` means "now"; otherwise the time the ride is wanted for.
+    pub scheduled_for: Option<String>,
+    pub created_at: String,
 }
