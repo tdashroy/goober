@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT status AS \"status!: String\" FROM rides WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "status!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c41f922e9ccfb47269447732d5711d822cd359c478ecafe41bc44016ad7f69e0"
+}

@@ -1,9 +1,9 @@
 # Goober server
 
 Rust backend for Goober — `axum` + SQLite via `sqlx`. Create a group, join with
-name + phone, bearer-token auth, curate the group's places, request a ride, and
-read the group's shared feed. Runs **locally over HTTP** — cloud deployment over
-HTTPS comes later.
+name + phone, bearer-token auth, curate the group's places, request a ride, drive
+it through its lifecycle, and read the group's shared feed. Runs **locally over
+HTTP** — cloud deployment over HTTPS comes later.
 
 ## Endpoints
 
@@ -15,7 +15,8 @@ HTTPS comes later.
 | GET    | `/me`                        | bearer | The caller's identity |
 | GET    | `/groups/{group_id}/feed`    | bearer | Group activity feed: the group's rides, newest first |
 | GET    | `/groups/{group_id}/members` | bearer | The group roster — who you can ping for a ride |
-| POST   | `/groups/{group_id}/rides`   | bearer | Request a ride (direct ping to one member) |
+| POST   | `/groups/{group_id}/rides`   | bearer | Request a ride (direct ping to a set of members) |
+| POST   | `/groups/{group_id}/rides/{ride_id}/actions` | bearer | Move a ride along: answer a ping, arrive, deliver |
 | GET    | `/groups/{group_id}/places`  | bearer | The group's curated places (any member) |
 | POST   | `/groups/{group_id}/places`  | admin  | Create a place (`name`, `lat`, `lng`) |
 | PUT    | `/groups/{group_id}/places/{place_id}` | admin | Rename / move a place |
@@ -49,6 +50,40 @@ group*, so an id from another group reads as `404`, and a token from another
 group is `403`. A new request is `open` and immediately appears in that group's
 feed — which is shared, not personal: everyone in the group sees every ride, with
 its route, party size, and offer.
+
+**The ride lifecycle** (`open` → `accepted` → `arrived` → `delivered`) is the
+server's to enforce: `POST .../rides/{ride_id}/actions` takes `{ action,
+person_id? }` and the server decides, from the ride's status and who is asking,
+whether that step is legal. A step out of order (arriving before anyone accepted,
+delivering before the driver is there) is a `409`; a step by the wrong person is
+a `403`. Every step taken is written to the ride's audit trail (`ride_events`),
+starting with the request itself.
+
+The four `action`s below are the structured menu a **pinged member** picks from —
+deliberately not a yes/no, since the three "no"s carry different information:
+
+| `action`         | Who      | Effect |
+|------------------|----------|--------|
+| `on_my_way`      | a pinged member | Accepts and **claims** the ride: the first one to say it becomes the driver and the ride goes `accepted`. Everyone else's tap comes back `409` — it's taken. |
+| `cant_right_now` | a pinged member | Records the "no". The ride stays `open` for whoever else was asked. |
+| `no_cart`        | a pinged member | Records the "no", with an optional `person_id` naming who took the cart. |
+| `someone_else`   | a pinged member | Records the "no", with a required `person_id` naming who is coming instead. It does **not** claim the ride — that person hasn't been asked yet. |
+| `arrived`        | the driver | `accepted` → `arrived`: the cart is out front. |
+| `delivered`      | the driver **or** the passenger | `arrived` → `delivered`: the ride is closed. The hand-off happens in person, so either end of it can say so. |
+
+A `person_id` is always a **member of the group**, never free text — that's what
+lets the app act on it: the passenger taps the person named and asks *them* for a
+ride. Naming yourself, the passenger, or someone tagged as riding along, or
+naming anyone on an action that names nobody, is a `400`.
+
+While the ride is still `open`, answering again **replaces** the earlier answer —
+someone who couldn't come may turn up a cart a minute later — though the audit
+trail keeps every answer given, including the overwritten ones.
+
+Each ride in the feed therefore carries its `status`, its `driver` (null until
+someone claims it), and the `responses` the people pinged have given so far —
+`{ member, response, person }`, where `person` is the lead or the delegate the
+answer named.
 
 **Roster:** `GET /groups/{group_id}/members` returns every member of the group
 (the caller included — the app's ping picker filters you out) as
@@ -126,8 +161,12 @@ Commit the regenerated `.sqlx/` files.
 ## Migrations
 
 Schema lives in `migrations/` and is applied via `sqlx migrate` (embedded in the
-binary and run on startup): `groups` + `members`, `places`, and `rides` +
-`ride_party_members`. Messages, IOUs and points arrive later.
+binary and run on startup): `groups` + `members`, `places`, `rides` +
+`ride_targets` + `ride_party_members`, and the ride lifecycle — a `driver_id` on
+`rides`, `ride_responses` (each pinged member's current answer), and
+`ride_events` (the append-only audit trail; every step a ride takes is written
+there, starting with the request, but nothing reads it to decide anything and no
+endpoint exposes it yet). Messages, IOUs and points arrive later.
 
 Times are stored as ISO-8601 UTC strings (`2027-07-04T18:30:00Z`) so they sort
 lexicographically, compare with SQLite's date functions, and parse directly in

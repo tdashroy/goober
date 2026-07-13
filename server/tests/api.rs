@@ -11,12 +11,20 @@ use axum::Router;
 use goober_server::{build_app, db};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use sqlx::SqlitePool;
 use tower::ServiceExt;
 
 /// Build a router backed by a clean in-memory DB.
 async fn test_app() -> Router {
+    test_app_with_pool().await.0
+}
+
+/// The same router, keeping the pool — for the one thing the API deliberately
+/// doesn't hand back: a ride's audit trail, which is written for posterity
+/// rather than for the feed.
+async fn test_app_with_pool() -> (Router, SqlitePool) {
     let pool = db::in_memory_pool().await.expect("migrate in-memory db");
-    build_app(pool)
+    (build_app(pool.clone()), pool)
 }
 
 /// Send a request and return (status, parsed-json-body).
@@ -759,8 +767,10 @@ struct RideFixture {
     /// The member being pinged to drive.
     driver_id: String,
     driver_token: String,
-    /// A third member — a bystander who still sees the shared feed.
+    /// A third member — a bystander who still sees the shared feed, and who can
+    /// be pinged alongside the driver when a ride asks more than one person.
     rider_id: String,
+    rider_token: String,
     pickup_id: String,
     dropoff_id: String,
 }
@@ -780,6 +790,7 @@ async fn ride_fixture(app: &Router) -> RideFixture {
         driver_id: driver["member"]["id"].as_str().unwrap().to_string(),
         driver_token: driver["token"].as_str().unwrap().to_string(),
         rider_id: rider["member"]["id"].as_str().unwrap().to_string(),
+        rider_token: rider["token"].as_str().unwrap().to_string(),
         group_id,
         passenger_token,
     }
@@ -1560,4 +1571,610 @@ async fn health_is_ok() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
+}
+
+// ----- the ride lifecycle -----
+
+/// Take a step on a ride, returning (status, body) so tests can assert on the
+/// steps that are refused as well as the ones that are taken.
+async fn ride_action(
+    app: &Router,
+    group_id: &str,
+    ride_id: &str,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    send(
+        app,
+        body_with_token(
+            "POST",
+            &format!("/groups/{group_id}/rides/{ride_id}/actions"),
+            token,
+            body,
+        ),
+    )
+    .await
+}
+
+/// Ask for a ride, pinging the given members, and return its id.
+async fn open_ride(app: &Router, f: &RideFixture, target_ids: &[&str]) -> String {
+    let (status, ride) = request_ride(
+        app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": target_ids,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    ride["id"].as_str().unwrap().to_string()
+}
+
+/// A ride's audit trail, oldest step first, as (kind, who took it, who it named).
+/// Ordered by insertion rather than by timestamp, which only has whole-second
+/// resolution — a whole ride can happen inside one second in a test.
+async fn ride_events(pool: &SqlitePool, ride_id: &str) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT kind, actor_id, person_id FROM ride_events WHERE ride_id = ? ORDER BY rowid",
+    )
+    .bind(ride_id)
+    .fetch_all(pool)
+    .await
+    .expect("ride events")
+}
+
+/// Find a ride on the group's feed.
+async fn feed_ride(app: &Router, group_id: &str, token: &str, ride_id: &str) -> Value {
+    let feed = fetch_feed(app, group_id, token).await;
+    feed["rides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == ride_id)
+        .unwrap_or_else(|| panic!("ride {ride_id} missing from {feed}"))
+        .clone()
+}
+
+// --- acceptance: a pinged member says "on my way", drives out, and the ride
+// --- walks open -> accepted -> arrived -> delivered, with every step audited ---
+
+#[tokio::test]
+async fn driver_accepts_arrives_and_delivers() {
+    let (app, pool) = test_app_with_pool().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    // "On my way" — the person pinged claims the ride and becomes its driver.
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "accept failed: {ride}");
+    assert_eq!(ride["status"], "accepted");
+    assert_eq!(ride["driver"]["id"], f.driver_id);
+    assert_eq!(ride["driver"]["display_name"], "Wendel");
+    assert_eq!(ride["responses"][0]["member"]["id"], f.driver_id);
+    assert_eq!(ride["responses"][0]["response"], "on_my_way");
+
+    // "I'm here" — the driver is at the pickup.
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "arrived" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "arrive failed: {ride}");
+    assert_eq!(ride["status"], "arrived");
+
+    // "Delivered" — the ride is closed.
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "delivered" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "deliver failed: {ride}");
+    assert_eq!(ride["status"], "delivered");
+
+    // The whole group watches it happen on the shared board.
+    let seen = feed_ride(&app, &f.group_id, &f.rider_token, &ride_id).await;
+    assert_eq!(seen["status"], "delivered");
+    assert_eq!(seen["driver"]["display_name"], "Wendel");
+
+    // And the ride's history is on the record, in the order it happened.
+    let events = ride_events(&pool, &ride_id).await;
+    assert_eq!(
+        events,
+        vec![
+            ("requested".to_string(), f.passenger_id.clone(), None),
+            ("on_my_way".to_string(), f.driver_id.clone(), None),
+            ("arrived".to_string(), f.driver_id.clone(), None),
+            ("delivered".to_string(), f.driver_id.clone(), None),
+        ]
+    );
+}
+
+// --- acceptance: several people are pinged, and the first to accept claims the
+// --- ride — the rest find it taken ---
+
+#[tokio::test]
+async fn the_first_pinged_member_to_accept_claims_the_ride() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id, &f.rider_id]).await;
+
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "accept failed: {ride}");
+    assert_eq!(ride["driver"]["id"], f.driver_id);
+
+    // The other person pinged is too late: the ride is already somebody's.
+    let (status, body) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.rider_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "second accept: {body}");
+
+    // Being too late doesn't take the ride off the first driver.
+    let seen = feed_ride(&app, &f.group_id, &f.passenger_token, &ride_id).await;
+    assert_eq!(seen["status"], "accepted");
+    assert_eq!(seen["driver"]["id"], f.driver_id);
+
+    // Nor can they say anything else about it now — it's off the market.
+    let (status, body) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.rider_token,
+        json!({ "action": "cant_right_now" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "late answer: {body}");
+}
+
+// --- acceptance: only the people pinged may answer a ride ---
+
+#[tokio::test]
+async fn a_member_who_was_not_pinged_cannot_accept() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    // Emily is in the group and sees the ride on the feed, but wasn't asked.
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    for action in ["on_my_way", "cant_right_now"] {
+        let (status, body) = ride_action(
+            &app,
+            &f.group_id,
+            &ride_id,
+            &f.rider_token,
+            json!({ "action": action }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{action}: {body}");
+    }
+
+    let seen = feed_ride(&app, &f.group_id, &f.passenger_token, &ride_id).await;
+    assert_eq!(seen["status"], "open");
+    assert!(seen["driver"].is_null());
+    assert!(seen["responses"].as_array().unwrap().is_empty());
+}
+
+// --- acceptance: the steps only happen in order — no arriving before accepting,
+// --- no delivering before arriving ---
+
+#[tokio::test]
+async fn a_ride_cannot_skip_a_step() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    // Nobody has claimed it, so nobody is at the pickup and nobody has driven.
+    for action in ["arrived", "delivered"] {
+        let (status, body) = ride_action(
+            &app,
+            &f.group_id,
+            &ride_id,
+            &f.driver_token,
+            json!({ "action": action }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{action} while open: {body}");
+    }
+
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Claimed, but the driver is still on the road: there's been no hand-off.
+    let (status, body) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "delivered" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "deliver before arrive: {body}"
+    );
+
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "arrived" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Arriving twice is a step out of order too.
+    let (status, body) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "arrived" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "arrive twice: {body}");
+
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "delivered" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // And a delivered ride is finished for good.
+    let (status, body) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "delivered" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "deliver twice: {body}");
+}
+
+// --- acceptance: the driver isn't the only one who can close a ride — the
+// --- passenger can too, from the other side of the same hand-off ---
+
+#[tokio::test]
+async fn the_passenger_can_deliver_the_ride_too() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    for action in ["on_my_way", "arrived"] {
+        let (status, body) = ride_action(
+            &app,
+            &f.group_id,
+            &ride_id,
+            &f.driver_token,
+            json!({ "action": action }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{action}: {body}");
+    }
+
+    // A bystander is not part of the ride and cannot close it.
+    let (status, body) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.rider_token,
+        json!({ "action": "delivered" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "bystander deliver: {body}");
+
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.passenger_token,
+        json!({ "action": "delivered" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "passenger deliver failed: {ride}");
+    assert_eq!(ride["status"], "delivered");
+}
+
+// --- acceptance: only the driver marks the arrival ---
+
+#[tokio::test]
+async fn only_the_driver_marks_the_arrival() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The passenger can't say the cart is out front — only the person in it can.
+    for token in [&f.passenger_token, &f.rider_token] {
+        let (status, body) = ride_action(
+            &app,
+            &f.group_id,
+            &ride_id,
+            token,
+            json!({ "action": "arrived" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "arrive by non-driver: {body}"
+        );
+    }
+}
+
+// --- acceptance: a "no" is not a dead end — "can't right now", "no cart" and
+// --- "someone else will come" each record what was said, and the last two hand
+// --- the passenger a person to ask next ---
+
+#[tokio::test]
+async fn a_declining_member_records_their_answer_and_the_person_they_name() {
+    let (app, pool) = test_app_with_pool().await;
+    let f = ride_fixture(&app).await;
+    // Susan is nobody's target — she's just the person who has the cart.
+    let susan = join_group(&app, &f.group_id, "Susan", "5557778888").await;
+    let susan_id = susan["member"]["id"].as_str().unwrap().to_string();
+
+    let ride_id = open_ride(&app, &f, &[&f.driver_id, &f.rider_id]).await;
+
+    // "I don't have a cart — but Susan took it."
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "no_cart", "person_id": susan_id }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "no_cart failed: {ride}");
+    // A "no" leaves the ride where it was: the other person pinged may still come.
+    assert_eq!(ride["status"], "open");
+    assert!(ride["driver"].is_null());
+    assert_eq!(ride["responses"][0]["member"]["display_name"], "Wendel");
+    assert_eq!(ride["responses"][0]["response"], "no_cart");
+    assert_eq!(ride["responses"][0]["person"]["id"], susan_id);
+    assert_eq!(ride["responses"][0]["person"]["display_name"], "Susan");
+
+    // "Someone else will come" names who is actually driving — but doesn't claim
+    // the ride, because Susan hasn't been asked yet.
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.rider_token,
+        json!({ "action": "someone_else", "person_id": susan_id }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "someone_else failed: {ride}");
+    assert_eq!(ride["status"], "open");
+    assert!(ride["driver"].is_null());
+
+    // Both answers are on the feed, by name, for the passenger to act on.
+    let seen = feed_ride(&app, &f.group_id, &f.passenger_token, &ride_id).await;
+    let responses = seen["responses"].as_array().unwrap();
+    assert_eq!(responses.len(), 2);
+    // Emily sorts before Wendel.
+    assert_eq!(responses[0]["member"]["display_name"], "Emily");
+    assert_eq!(responses[0]["response"], "someone_else");
+    assert_eq!(responses[0]["person"]["display_name"], "Susan");
+    assert_eq!(responses[1]["member"]["display_name"], "Wendel");
+    assert_eq!(responses[1]["response"], "no_cart");
+
+    // A plain "can't right now" replaces Wendel's earlier answer and names nobody.
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "cant_right_now" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "cant_right_now failed: {ride}");
+    let responses = ride["responses"].as_array().unwrap();
+    assert_eq!(
+        responses.len(),
+        2,
+        "answering again replaces the old answer"
+    );
+    assert_eq!(responses[1]["member"]["display_name"], "Wendel");
+    assert_eq!(responses[1]["response"], "cant_right_now");
+    assert!(responses[1]["person"].is_null());
+
+    // Every answer is on the record, including the one that was overwritten.
+    let events = ride_events(&pool, &ride_id).await;
+    assert_eq!(
+        events,
+        vec![
+            ("requested".to_string(), f.passenger_id.clone(), None),
+            (
+                "no_cart".to_string(),
+                f.driver_id.clone(),
+                Some(susan_id.clone())
+            ),
+            (
+                "someone_else".to_string(),
+                f.rider_id.clone(),
+                Some(susan_id.clone())
+            ),
+            ("cant_right_now".to_string(), f.driver_id.clone(), None),
+        ]
+    );
+}
+
+// --- acceptance: the person an answer names is a member of the group, not a
+// --- sentence — that's what makes them tappable ---
+
+#[tokio::test]
+async fn the_person_an_answer_names_must_be_someone_you_could_ping() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    let cases = [
+        // "Someone else will come" is no use without a name.
+        (json!({ "action": "someone_else" }), StatusCode::BAD_REQUEST),
+        // Naming yourself, or the person waiting for the ride, is a mis-tap.
+        (
+            json!({ "action": "someone_else", "person_id": f.driver_id }),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({ "action": "no_cart", "person_id": f.passenger_id }),
+            StatusCode::BAD_REQUEST,
+        ),
+        // The other answers name nobody.
+        (
+            json!({ "action": "on_my_way", "person_id": f.rider_id }),
+            StatusCode::BAD_REQUEST,
+        ),
+        // And a name has to be a person in the group.
+        (
+            json!({ "action": "no_cart", "person_id": "nobody" }),
+            StatusCode::NOT_FOUND,
+        ),
+    ];
+
+    for (body, expected) in cases {
+        let (status, resp) =
+            ride_action(&app, &f.group_id, &ride_id, &f.driver_token, body.clone()).await;
+        assert_eq!(status, expected, "{body} gave {resp}");
+    }
+
+    // "I don't have a cart" on its own is fine — you needn't know who has it.
+    let (status, ride) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "no_cart" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bare no_cart failed: {ride}");
+    assert_eq!(ride["responses"][0]["response"], "no_cart");
+    assert!(ride["responses"][0]["person"].is_null());
+}
+
+// --- acceptance: someone tagged as riding along can't be named as the one who
+// --- would drive — a lead has to be a person the passenger could actually ask ---
+
+#[tokio::test]
+async fn a_tagged_rider_cannot_be_named_as_the_substitute_driver() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Emily is tagged as riding along with the passenger.
+    let (status, ride) = request_ride(
+        &app,
+        &f.group_id,
+        &f.passenger_token,
+        json!({
+            "pickup_id": f.pickup_id,
+            "dropoff_id": f.dropoff_id,
+            "target_ids": [f.driver_id],
+            "party_size": 2,
+            "party_member_ids": [f.rider_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "request failed: {ride}");
+    let ride_id = ride["id"].as_str().unwrap().to_string();
+
+    // So neither "no cart" nor "someone else will come" may point at her — she
+    // can't drive the cart she'd be riding in.
+    for action in ["no_cart", "someone_else"] {
+        let (status, resp) = ride_action(
+            &app,
+            &f.group_id,
+            &ride_id,
+            &f.driver_token,
+            json!({ "action": action, "person_id": f.rider_id }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{action} gave {resp}");
+        assert_eq!(
+            resp["error"],
+            "they're riding with the passenger — name somebody who could drive"
+        );
+    }
+}
+
+// --- acceptance: a ride belongs to its group, and taking a step on it needs a
+// --- token from that group ---
+
+#[tokio::test]
+async fn a_ride_cannot_be_moved_along_from_outside_its_group() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    let outsider = create_group(&app, "Lake 2027", "Mallory", "5550001111").await;
+    let outsider_token = outsider["token"].as_str().unwrap();
+
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        outsider_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // And an unknown ride is not found, even for a member of the group.
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        "no-such-ride",
+        &f.driver_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

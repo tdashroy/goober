@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO ride_responses (ride_id, member_id, response, person_id)\n            VALUES (?, ?, ?, ?)\n            ON CONFLICT (ride_id, member_id) DO UPDATE SET\n                response = excluded.response,\n                person_id = excluded.person_id\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "8ce7a12175abcd8c7ba18152effebca215cbed13f5eb49d33df321a7ef747a7e"
+}

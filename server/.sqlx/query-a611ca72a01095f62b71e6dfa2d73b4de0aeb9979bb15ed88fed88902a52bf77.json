@@ -1,0 +1,128 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            r.id            AS \"id!: String\",\n            r.group_id      AS \"group_id!: String\",\n            r.status        AS \"status!: String\",\n            r.party_size    AS \"party_size!: i64\",\n            r.offer         AS \"offer?: String\",\n            r.scheduled_for AS \"scheduled_for?: String\",\n            r.created_at    AS \"created_at!: String\",\n            passenger.id           AS \"passenger_id!: String\",\n            passenger.display_name AS \"passenger_name!: String\",\n            driver.id           AS \"driver_id?: String\",\n            driver.display_name AS \"driver_name?: String\",\n            pickup.id   AS \"pickup_id!: String\",\n            pickup.name AS \"pickup_name!: String\",\n            pickup.lat  AS \"pickup_lat!: f64\",\n            pickup.lng  AS \"pickup_lng!: f64\",\n            dropoff.id   AS \"dropoff_id!: String\",\n            dropoff.name AS \"dropoff_name!: String\",\n            dropoff.lat  AS \"dropoff_lat!: f64\",\n            dropoff.lng  AS \"dropoff_lng!: f64\"\n        FROM rides r\n        JOIN members passenger ON passenger.id = r.passenger_id\n        LEFT JOIN members driver ON driver.id = r.driver_id\n        JOIN places pickup ON pickup.id = r.pickup_id\n        JOIN places dropoff ON dropoff.id = r.dropoff_id\n        WHERE r.group_id = ? AND (?2 IS NULL OR r.id = ?2)\n        ORDER BY r.created_at DESC, r.id DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "group_id!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "status!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "party_size!: i64",
+        "ordinal": 3,
+        "type_info": "Integer"
+      },
+      {
+        "name": "offer?: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "scheduled_for?: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at!: String",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "passenger_id!: String",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "passenger_name!: String",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "driver_id?: String",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "driver_name?: String",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "pickup_id!: String",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "pickup_name!: String",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "pickup_lat!: f64",
+        "ordinal": 13,
+        "type_info": "Float"
+      },
+      {
+        "name": "pickup_lng!: f64",
+        "ordinal": 14,
+        "type_info": "Float"
+      },
+      {
+        "name": "dropoff_id!: String",
+        "ordinal": 15,
+        "type_info": "Text"
+      },
+      {
+        "name": "dropoff_name!: String",
+        "ordinal": 16,
+        "type_info": "Text"
+      },
+      {
+        "name": "dropoff_lat!: f64",
+        "ordinal": 17,
+        "type_info": "Float"
+      },
+      {
+        "name": "dropoff_lng!: f64",
+        "ordinal": 18,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "a611ca72a01095f62b71e6dfa2d73b4de0aeb9979bb15ed88fed88902a52bf77"
+}

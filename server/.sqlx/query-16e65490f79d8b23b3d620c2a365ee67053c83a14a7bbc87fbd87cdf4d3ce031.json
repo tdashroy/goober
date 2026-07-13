@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id           AS \"id!: String\",\n            passenger_id AS \"passenger_id!: String\",\n            driver_id    AS \"driver_id?: String\",\n            status       AS \"status!: String\"\n        FROM rides\n        WHERE id = ? AND group_id = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "passenger_id!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "driver_id?: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "status!: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "16e65490f79d8b23b3d620c2a365ee67053c83a14a7bbc87fbd87cdf4d3ce031"
+}

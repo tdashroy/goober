@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ride_id FROM ride_targets WHERE ride_id = ? AND member_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "ride_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2b8ba3ea8ed367a3f0383ea589de0e0e980a16869592a32620da1e0648ededed"
+}

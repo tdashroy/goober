@@ -218,18 +218,117 @@ pub struct MemberRef {
     pub display_name: String,
 }
 
-/// A ride as the group's feed shows it: who asked, who was pinged, the route,
-/// the party, the offer, and when it's wanted for.
+// ----- the ride lifecycle -----
+
+/// A ride nobody has claimed: still on offer to everyone pinged.
+pub const RIDE_OPEN: &str = "open";
+/// Claimed — the driver is on the way.
+pub const RIDE_ACCEPTED: &str = "accepted";
+/// The driver is at the pickup.
+pub const RIDE_ARRIVED: &str = "arrived";
+/// Done: the passenger is where they wanted to be, and the ride is closed.
+pub const RIDE_DELIVERED: &str = "delivered";
+
+/// Every move a ride can be asked to make. The server decides whether the move
+/// is legal — from the ride's current status, and from who is asking — so this
+/// is a request, not an assertion.
+///
+/// The first four are the structured menu a **pinged member** picks from. It is
+/// deliberately not a yes/no: the three "no"s carry different information, and
+/// two of them can hand the passenger somewhere else to look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RideAction {
+    /// "On my way" — accept, and thereby **claim** the ride. First one there
+    /// wins; everyone else pinged is off the hook.
+    OnMyWay,
+    /// "Can't right now."
+    CantRightNow,
+    /// "I don't have a cart" — optionally naming the person who took it.
+    NoCart,
+    /// "Someone else will come" — naming who is actually driving. It doesn't
+    /// claim the ride: the person named hasn't been asked yet. The passenger
+    /// taps them to ask, and *they* claim it by saying "on my way".
+    SomeoneElse,
+    /// "I'm here" — the driver is at the pickup.
+    Arrived,
+    /// "Delivered 🎉" — either the driver or the passenger closes the ride.
+    Delivered,
+}
+
+/// The event kind written when a ride is first asked for. Not a [`RideAction`]:
+/// requesting isn't a move on an existing ride, it's how one begins.
+pub const RIDE_EVENT_REQUESTED: &str = "requested";
+
+impl RideAction {
+    /// The wire/database spelling — one string for the JSON in, the response
+    /// recorded, and the audit event written.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RideAction::OnMyWay => "on_my_way",
+            RideAction::CantRightNow => "cant_right_now",
+            RideAction::NoCart => "no_cart",
+            RideAction::SomeoneElse => "someone_else",
+            RideAction::Arrived => "arrived",
+            RideAction::Delivered => "delivered",
+        }
+    }
+
+    /// Whether this is one of the four answers a pinged member gives — as
+    /// opposed to a move only the claiming driver (or the passenger) can make.
+    pub fn is_response(self) -> bool {
+        matches!(
+            self,
+            RideAction::OnMyWay
+                | RideAction::CantRightNow
+                | RideAction::NoCart
+                | RideAction::SomeoneElse
+        )
+    }
+}
+
+/// Move a ride along: answer a ping, arrive, or deliver.
+#[derive(Debug, Deserialize)]
+pub struct RideActionRequest {
+    pub action: RideAction,
+    /// The person the answer names — the lead who took the cart, or the driver
+    /// coming instead. A **member id**, never free text, so the app can act on
+    /// it. Required by `someone_else`, optional on `no_cart`, and meaningless
+    /// (so rejected) on everything else.
+    #[serde(default)]
+    pub person_id: Option<String>,
+}
+
+/// What one pinged member said back, as the feed shows it.
+#[derive(Debug, Serialize)]
+pub struct RideResponseView {
+    /// The pinged member who answered.
+    pub member: MemberRef,
+    /// One of `on_my_way`, `cant_right_now`, `no_cart`, `someone_else`.
+    pub response: String,
+    /// Who they pointed at, if anyone: the person who took their cart, or the
+    /// person coming instead. The passenger taps them to ask them for a ride.
+    pub person: Option<MemberRef>,
+}
+
+/// A ride as the group's feed shows it: who asked, who was pinged, what they
+/// said back, who's driving, the route, the party, the offer, and when it's
+/// wanted for.
 #[derive(Debug, Serialize)]
 pub struct RideView {
     pub id: String,
     pub group_id: String,
-    /// `open` today; a driver accepting/arriving/delivering comes later.
+    /// Where the ride is: `open`, `accepted`, `arrived` or `delivered`.
     pub status: String,
     pub passenger: MemberRef,
+    /// Who claimed the ride and is driving it. `None` until someone accepts.
+    pub driver: Option<MemberRef>,
     /// Everyone who was pinged, by name — always at least one. Sorted by name so
     /// the feed reads the same to everyone.
     pub targets: Vec<MemberRef>,
+    /// What the people pinged have said back so far, by name. Empty until
+    /// someone answers.
+    pub responses: Vec<RideResponseView>,
     pub pickup: PlaceView,
     pub dropoff: PlaceView,
     pub party_size: i64,
