@@ -72,7 +72,9 @@ class ApiClient {
   /// resolves seeded people; against any other server the call fails. Callers
   /// must gate it to debug builds (see `DevLogin`).
   Future<Session> devSession({required String memberKey}) async {
-    final resp = await _client.get(Uri.parse('$baseUrl/dev/session/$memberKey'));
+    final resp = await _client.get(
+      Uri.parse('$baseUrl/dev/session/$memberKey'),
+    );
     return Session.fromJson(_decode(resp));
   }
 
@@ -136,6 +138,33 @@ class ApiClient {
         'scheduled_for': scheduledFor?.toUtc().toIso8601String(),
         'party_member_ids': partyMemberIds,
       }),
+    );
+    return Ride.fromJson(_decode(resp));
+  }
+
+  /// Move a ride along: answer a ping, mark the arrival, or close the ride out.
+  ///
+  /// The server decides whether the step is legal — from where the ride is and
+  /// who is asking — so this is a request, not an assertion. A step out of turn
+  /// (arriving before anyone accepted, accepting a ride somebody else already
+  /// claimed) comes back `409`; a step by the wrong person comes back `403`.
+  ///
+  /// [personId] names the roster member an answer points at: who took the cart
+  /// ([RideAction.noCart], optional) or who is coming instead
+  /// ([RideAction.someoneElse], required). The other actions name nobody.
+  ///
+  /// Returns the ride as it now stands.
+  Future<Ride> rideAction({
+    required String groupId,
+    required String token,
+    required String rideId,
+    required RideAction action,
+    String? personId,
+  }) async {
+    final resp = await _client.post(
+      Uri.parse('$baseUrl/groups/$groupId/rides/$rideId/actions'),
+      headers: _jsonAuthHeaders(token),
+      body: jsonEncode({'action': action.wire, 'person_id': personId}),
     );
     return Ride.fromJson(_decode(resp));
   }
