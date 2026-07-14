@@ -44,7 +44,9 @@ On startup it fetches that person's session from the server and uses the real
 token it gets back; from there it is an ordinary client. The profile takes
 precedence over any token already on the device, so relaunching as someone else
 actually switches person. With no profile the boot flow is untouched, and if the
-server has no such person the app falls back to normal onboarding.
+server has no such person the app falls back to normal onboarding — logging the
+underlying error to the device log first (debug builds only), so a broken dev
+harness leaves a trace instead of looking exactly like an unseeded one.
 
 **This is an auth bypass, and it is impossible in a release build.** The gate
 (`lib/src/dev_login.dart`) is `kDebugMode`, which the compiler folds to a constant

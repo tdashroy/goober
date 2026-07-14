@@ -115,7 +115,12 @@ class _RootRouterState extends State<RootRouter> {
       final session = await dev.signIn(widget.api);
       await widget.tokenStore.save(session);
       return session;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      // Falling back to onboarding is intended, but doing it in silence is how a
+      // broken dev harness passes for an unseeded one. Leave a trace: this only
+      // runs in a debug build, since a profile is the sole way to get here.
+      debugPrint('dev sign-in as "${dev.memberKey}" failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
       return null;
     }
   }
