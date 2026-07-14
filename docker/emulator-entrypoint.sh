@@ -169,9 +169,34 @@ if [ ! -f "$APK_PATH" ]; then
   done
 fi
 
+# `adb install` does not always exit non-zero on a rejected install — some
+# platform-tools builds print "Failure [...]" and still return 0 — so judge it by
+# its output as well as its status.
+install_apk() {
+  local out
+  out=$(adb install -r "$APK_PATH" 2>&1) || { printf '%s\n' "$out"; return 1; }
+  printf '%s\n' "$out"
+  case "$out" in
+    *Failure*|*FAILED*) return 1 ;;
+  esac
+  return 0
+}
+
 if [ -f "$APK_PATH" ]; then
   log "installing app from $APK_PATH"
-  adb install -r "$APK_PATH"
+  # A reused container boots the AVD it already wrote to, so a copy of the app
+  # from an earlier run can still be installed on it. Android refuses to update
+  # an installed app with one signed by a different key
+  # (INSTALL_FAILED_UPDATE_INCOMPATIBLE), which would kill the boot right here.
+  # Debug builds sign with a stable key now (see docker/build-apks.sh), so this
+  # should not happen — but an AVD still carrying an app from before that, or
+  # from a keystore since thrown away, would be stuck forever otherwise. A stale
+  # install is worth nothing: drop it and put the fresh one on cleanly.
+  if ! install_apk; then
+    log "install refused — removing the existing $APP_ID from this AVD and retrying"
+    adb uninstall "$APP_ID" || true
+    install_apk
+  fi
   log "launching $APP_ID"
   adb shell monkey -p "$APP_ID" -c android.intent.category.LAUNCHER 1 \
     || adb shell am start -n "$APP_ID/.MainActivity" \
