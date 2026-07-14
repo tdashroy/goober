@@ -19,10 +19,14 @@ FROM goober-base:latest
 #     already baked into the base image's $ANDROID_SDK_ROOT.
 #   - /home/dev/.gradle — the Gradle build cache and downloaded dependencies.
 #   - $PUB_CACHE — Dart/Flutter package cache.
+#   - /home/dev/.android — holds the debug keystore every debug APK is signed
+#     with. Persisted so the key stays the same from build to build: a fresh key
+#     would make an emulator that still has an earlier build installed reject the
+#     new APK as an incompatible update (see docker/build-apks.sh).
 RUN mkdir -p /apk "${ANDROID_SDK_ROOT}/ndk" "${ANDROID_SDK_ROOT}/cmake" \
-             /home/dev/.gradle "${PUB_CACHE}" \
+             /home/dev/.gradle /home/dev/.android "${PUB_CACHE}" \
     && chown dev:dev /apk "${ANDROID_SDK_ROOT}/ndk" "${ANDROID_SDK_ROOT}/cmake" \
-             /home/dev/.gradle "${PUB_CACHE}"
+             /home/dev/.gradle /home/dev/.android "${PUB_CACHE}"
 
 # Run as the unprivileged user; no root, no device access.
 USER dev

@@ -36,8 +36,8 @@ min) and fills the **Gradle** and **pub** caches. Those live in the container
 filesystem, so without help a fresh container — after `make down`, on a new build
 image, or a new machine — reinstalls them every time.
 
-To avoid that, the `apk-builder` and `test` services mount four named volumes at
-the specific cache directories, so a fresh container reuses them and does the fast
+To avoid that, the `apk-builder` and `test` services mount named volumes at the
+specific cache directories, so a fresh container reuses them and does the fast
 incremental build instead:
 
 | Volume | Mount | Holds |
@@ -46,6 +46,7 @@ incremental build instead:
 | `android-cmake` | `$ANDROID_SDK_ROOT/cmake` | auto-installed CMake |
 | `gradle-cache` | `/home/dev/.gradle` | Gradle build cache + deps |
 | `pub-cache` | `$PUB_CACHE` (`/opt/pub-cache`) | Dart/Flutter packages |
+| `android-config` | `/home/dev/.android` | the debug keystore — see below |
 
 Measured effect: a cold APK build on empty volumes ~**200s** (NDK installs once),
 then a fresh container reusing the volumes ~**40s** with no NDK reinstall.
@@ -56,6 +57,34 @@ image's `$ANDROID_SDK_ROOT`; and the mount points are pre-created owned by the
 unprivileged `dev` user in `docker/build-test.Dockerfile`, so a fresh (otherwise
 root-owned) volume is seeded writable by the build user. The caches survive `make
 down` and are cleared by `make clean`.
+
+### The debug keystore is persisted too, and that is not an optimization
+
+A fifth volume, `android-config`, holds `/home/dev/.android` — where the **debug
+keystore** every debug APK is signed with lives. It is persisted for correctness,
+not speed.
+
+The Android build mints that keystore on demand when it is missing, and it lives
+in the build container's home directory. A recreated `apk-builder` container
+therefore used to sign each run's APK with a **brand-new key**. Meanwhile the
+emulators keep their AVD *writable* across a run (they must — booting
+`-read-only` breaks guest networking), so a container reused by a later `make
+scenario` still has the previous run's app installed. Android will not update an
+installed app with one signed by a different key: `adb install` fails with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the entrypoint dies, and the emulator
+container exits — a `make scenario` that only worked after a `make clean`.
+
+So: `docker/build-apks.sh` creates the keystore exactly **once**, on the persisted
+volume, with the stock debug parameters, and every later build reuses it. The key
+is stable, the install is an ordinary update, and reruns need no teardown. As a
+backstop, `docker/emulator-entrypoint.sh` treats a refused install as recoverable
+— it uninstalls the app from the AVD and installs again — so an AVD carrying an
+app signed by a key that no longer exists cannot wedge a boot either. `make clean`
+removes this volume in the same sweep that removes the emulator containers, so the
+key and the apps installed against it are only ever discarded together.
+
+This is strictly the **debug/dev-seed** signing path — the harness builds
+`--debug` only, and nothing here touches release signing.
 
 ## Host requirements
 

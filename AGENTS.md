@@ -109,6 +109,19 @@ the whole stack. See `docs/dev-container.md`. Key points:
   private writable copy and there is no shared AVD to protect. The entrypoint
   pings `10.0.2.2` after boot and shouts if the guest can't reach the server, so
   this can't go unnoticed again.
+- **Debug APKs must always be signed with the same key.** Because the emulators
+  boot their AVD writable (see above), a container reused by a later run still has
+  the previous run's app installed — and Android refuses to update an installed
+  app with one signed by a different key (`adb install` →
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, which kills the emulator's boot). The
+  Android build mints the debug keystore on demand in the build container's home,
+  so a recreated `apk-builder` would otherwise sign every run with a fresh key.
+  The keystore therefore lives on a persisted volume (`android-config` →
+  `/home/dev/.android`) and `docker/build-apks.sh` creates it exactly once. Don't
+  move it back into the image or the container layer. As a backstop, the emulator
+  entrypoint treats a refused install as recoverable — uninstall, then install
+  again — so a stale AVD can't wedge a boot. This is the debug/dev-seed path only;
+  release signing is untouched.
 - The emulator container is **privileged** with `/dev/kvm` and `/dev/dri` mapped
   in and the host X socket (`/tmp/.X11-unix`) mounted; it runs with `DISPLAY=:0`
   so its Qt window renders through the host X server as a native desktop window.

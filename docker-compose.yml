@@ -67,6 +67,12 @@ services:
       - android-cmake:/opt/android-sdk/cmake
       - gradle-cache:/home/dev/.gradle
       - pub-cache:/opt/pub-cache
+      # The debug keystore every debug APK is signed with. Persisted so that all
+      # builds — including ones from a container recreated since the last run —
+      # sign with the same key. An emulator whose AVD still holds an app signed
+      # with a different key refuses to install the new one (see
+      # docker/build-apks.sh, docker/emulator-entrypoint.sh).
+      - android-config:/home/dev/.android
     # Clears any prior APK first so the emulator (which waits for the file to
     # appear, not for this container to exit) never installs a stale build, and
     # publishes each fresh one via an atomic rename so it is only ever seen whole.
@@ -148,6 +154,9 @@ services:
       - android-cmake:/opt/android-sdk/cmake
       - gradle-cache:/home/dev/.gradle
       - pub-cache:/opt/pub-cache
+      # Shares the apk-builder's debug keystore, so the build this installs over
+      # the emulator's copy is signed with the same key it was.
+      - android-config:/home/dev/.android
     command: >
       bash -lc "cd /workspace/app &&
                 flutter pub get &&
@@ -187,3 +196,7 @@ volumes:
   android-cmake:
   gradle-cache:
   pub-cache:
+  # The debug keystore the APKs are signed with. Cleared by `make clean` in the
+  # same sweep that removes the emulator containers, so the key and the apps
+  # installed against it are only ever thrown away together.
+  android-config:
