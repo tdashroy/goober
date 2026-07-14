@@ -270,8 +270,8 @@ phone number, adding places, then somehow being a second relative as well. The
 harness collapses that into one command:
 
 ```sh
-make scenario                                    # the beach trip, as Bob and Grandma
-make scenario SEED=beach-trip USERS=bob,jen      # pick the world and the people
+make scenario                                    # the beach trip, as Bob, Grandma and Jen
+make scenario SEED=beach-trip USERS=bob,pete     # pick the world and the people
 ```
 
 That gives you a **server already holding a whole trip** and **one emulator window
@@ -301,8 +301,9 @@ curl -s localhost:8080/dev/session/bob                                  # Bob's 
 curl -s -H 'Authorization: Bearer devseed-bob' localhost:8080/groups/beach-trip/places
 ```
 
-**2. Several emulators side by side.** `USERS=bob,grandma` runs one emulator per
-person: the `emulator` service plus a generated `emulator-2` (and `-3`, …). Each
+**2. Several emulators side by side.** `USERS=bob,grandma,jen` — the default —
+runs one emulator per person: the `emulator` service plus a generated `emulator-2`
+and `emulator-3` (and `-4`, …). Each
 draws its own native window, each bridges to the same server through its own
 `socat` hop, and each boots **its own private copy** of the AVD baked into the
 image — nothing is shared across containers, so no instance can lock or write
@@ -321,9 +322,9 @@ gets back, so from that point on the app is a completely ordinary client. The
 profile wins over any token already on the device, so relaunching an emulator as
 a different relative really does switch relative.
 
-Because the profile is compiled in, "two people at once" means two APKs:
+Because the profile is compiled in, "several people at once" means several APKs:
 `apk-builder` builds one per name in `USERS` (`app-debug-bob.apk`,
-`app-debug-grandma.apk`), and each emulator installs its own. Each window shows a
+`app-debug-grandma.apk`, `app-debug-jen.apk`), and each emulator installs its own. Each window shows a
 corner banner with the person's name so you can tell them apart at a glance.
 
 If the server isn't seeded (or isn't up yet), the app falls back to the normal
@@ -411,7 +412,7 @@ make clean         # stop and remove volumes (APK, server DB, build caches)
 ```
 
 `make scenario` takes `SEED=` (which world) and `USERS=` (which people, one
-emulator each); it defaults to `SEED=beach-trip USERS=bob,grandma`.
+emulator each); it defaults to `SEED=beach-trip USERS=bob,grandma,jen`.
 
 Docker output is **plain and append-only by default** (no in-place redraw), so
 the terminal stays calm. Prefix any target with `VERBOSE=1` (e.g. `VERBOSE=1 make

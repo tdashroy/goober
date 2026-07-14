@@ -7,14 +7,14 @@
 # `make scenario` seeds the server with a ready-made world and opens one emulator
 # per person named in USERS, each already signed in as them:
 #
-#   make scenario                                  # beach-trip, as bob + grandma
-#   make scenario SEED=beach-trip USERS=bob,jen    # pick the world and the people
+#   make scenario                                  # beach-trip, as bob + grandma + jen
+#   make scenario SEED=beach-trip USERS=bob,pete   # pick the world and the people
 #
 # SEED names a server seed profile (server/src/seed.rs); USERS names people from
 # it. Both are dev-only and cannot exist in a release build — see
 # docs/dev-container.md.
 SEED ?= beach-trip
-USERS ?= bob,grandma
+USERS ?= bob,grandma,jen
 
 # One emulator service per person, generated because how many there are is up to
 # whoever runs the scenario. Rewritten by `make scenario`, removed by `make clean`.
