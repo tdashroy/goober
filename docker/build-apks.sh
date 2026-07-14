@@ -11,9 +11,31 @@ set -euo pipefail
 API_BASE="${GOOBER_API_BASE:-http://10.0.2.2:8080}"
 APK_DIR="${APK_DIR:-/apk}"
 CLIENT_PROFILES="${CLIENT_PROFILES:-}"
+DEBUG_KEYSTORE="${DEBUG_KEYSTORE:-${HOME}/.android/debug.keystore}"
 
 cd /workspace/app
 mkdir -p "$APK_DIR"
+
+# Every debug build must be signed with the *same* key across runs. Android
+# refuses to update an installed app whose signature differs from the incoming
+# one (INSTALL_FAILED_UPDATE_INCOMPATIBLE), and the emulators now keep their
+# writable AVD between runs — so an app installed by an earlier scenario is still
+# there when the next one installs over it. The Android build generates this
+# keystore on demand if it is missing, and it lives in this container's home, so
+# a recreated container would otherwise mint a fresh key on every build and every
+# reused emulator would reject the install. Holding it on a persisted volume and
+# creating it exactly once keeps the key stable (and the builds reproducible).
+# These are the stock debug-keystore parameters the Android toolchain expects.
+if [ ! -f "$DEBUG_KEYSTORE" ]; then
+  echo "[apk] creating the dev debug keystore at ${DEBUG_KEYSTORE} (once; reused by every later build)"
+  mkdir -p "$(dirname "$DEBUG_KEYSTORE")"
+  keytool -genkeypair \
+    -keystore "$DEBUG_KEYSTORE" \
+    -storepass android -keypass android \
+    -alias androiddebugkey \
+    -dname "CN=Android Debug,O=Android,C=US" \
+    -keyalg RSA -keysize 2048 -validity 10950 >/dev/null
+fi
 
 # The APKs this run is responsible for. Emulators wait for their file to appear
 # rather than for this container to exit, so every one of them is cleared up front
