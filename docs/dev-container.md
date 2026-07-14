@@ -271,9 +271,9 @@ curl -s -H 'Authorization: Bearer devseed-bob' localhost:8080/groups/beach-trip/
 **2. Several emulators side by side.** `USERS=bob,grandma` runs one emulator per
 person: the `emulator` service plus a generated `emulator-2` (and `-3`, …). Each
 draws its own native window, each bridges to the same server through its own
-`socat` hop, and they all boot the one AVD baked into the image with
-**`-read-only`** — the emulator's own answer to "Running multiple emulators with
-the same AVD", so no instance can lock or write state that the others trip over.
+`socat` hop, and each boots **its own private copy** of the AVD baked into the
+image — nothing is shared across containers, so no instance can lock or write
+state that the others trip over.
 
 The generated services live in `docker-compose.scenario.yml`
 (`docker/gen-scenario.sh` writes it; it is gitignored — how many people you want

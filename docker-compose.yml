@@ -80,8 +80,9 @@ services:
   # This is instance one. `make scenario` runs several people side by side by
   # generating sibling services (emulator-2, ...) from this one — see
   # docker/gen-scenario.sh — each with its own window, each installing the APK
-  # built for its person. They all boot the same baked AVD `-read-only` so no
-  # instance locks it against the others.
+  # built for its person. Nothing is shared between them: the AVD lives in the
+  # image layer, so every container boots its own private writable copy and no
+  # instance can lock or corrupt another's.
   emulator:
     build:
       context: .

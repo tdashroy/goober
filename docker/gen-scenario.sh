@@ -10,8 +10,8 @@
 # sibling service. They are generated rather than hand-written because how many
 # there are is up to whoever runs the scenario.
 #
-# All instances share the one AVD baked into the image and boot it `-read-only`
-# (see docker/emulator-entrypoint.sh), which is what lets them run side by side.
+# Instances run side by side because they share nothing: the AVD is baked into
+# the image, so each container boots its own private writable copy of it.
 set -euo pipefail
 
 usage() {
