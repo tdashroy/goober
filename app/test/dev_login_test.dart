@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goober/main.dart';
 import 'package:goober/src/api_client.dart';
@@ -93,30 +94,33 @@ void main() {
     });
   });
 
-  testWidgets('a client profile boots straight into the seeded group, signed in '
-      'as that person', (tester) async {
-    final store = InMemoryTokenStore();
-    await tester.pumpWidget(
-      GooberApp(
-        api: _seededServer(),
-        tokenStore: store,
-        devLogin: const DevLogin('bob'),
-      ),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'a client profile boots straight into the seeded group, signed in '
+    'as that person',
+    (tester) async {
+      final store = InMemoryTokenStore();
+      await tester.pumpWidget(
+        GooberApp(
+          api: _seededServer(),
+          tokenStore: store,
+          devLogin: const DevLogin('bob'),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    // No login screen — we are on the seeded group's feed.
-    expect(find.byType(OnboardingScreen), findsNothing);
-    expect(find.byType(FeedScreen), findsOneWidget);
-    expect(find.text('Beach 2027'), findsOneWidget);
+      // No login screen — we are on the seeded group's feed.
+      expect(find.byType(OnboardingScreen), findsNothing);
+      expect(find.byType(FeedScreen), findsOneWidget);
+      expect(find.text('Beach 2027'), findsOneWidget);
 
-    // ...as Uncle Bob, holding his real token.
-    final saved = await store.read();
-    expect(saved, isNotNull);
-    expect(saved!.token, 'devseed-bob');
-    expect(saved.member.displayName, 'Uncle Bob');
-    expect(saved.groupId, 'beach-trip');
-  });
+      // ...as Uncle Bob, holding his real token.
+      final saved = await store.read();
+      expect(saved, isNotNull);
+      expect(saved!.token, 'devseed-bob');
+      expect(saved.member.displayName, 'Uncle Bob');
+      expect(saved.groupId, 'beach-trip');
+    },
+  );
 
   testWidgets('the client profile wins over a token left on the device', (
     tester,
@@ -157,13 +161,47 @@ void main() {
     expect(await store.read(), isNull);
   });
 
+  testWidgets('a failed dev sign-in leaves a diagnostic trace, not silence', (
+    tester,
+  ) async {
+    // The whole bug this guards against is a broken dev harness falling back to
+    // onboarding without a word. The fallback itself is fine — the silence is
+    // not. Capture debugPrint and prove the failure is now named.
+    final printed = <String>[];
+    final original = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) printed.add(message);
+    };
+
+    final store = InMemoryTokenStore();
+    await tester.pumpWidget(
+      GooberApp(
+        api: _unseededServer(),
+        tokenStore: store,
+        devLogin: const DevLogin('bob'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Restore before the body returns: the test binding asserts no foundation
+    // debug variable is left reassigned at end of test.
+    debugPrint = original;
+
+    // Still falls back to onboarding (behaviour unchanged)...
+    expect(find.byType(OnboardingScreen), findsOneWidget);
+    // ...but now says so, naming the person it failed to sign in as.
+    expect(
+      printed.any((m) => m.contains('dev sign-in as "bob" failed')),
+      isTrue,
+      reason:
+          'expected a diagnostic naming the failed dev sign-in, got: $printed',
+    );
+  });
+
   testWidgets('with no client profile the boot flow is untouched', (
     tester,
   ) async {
     final store = InMemoryTokenStore();
-    await tester.pumpWidget(
-      GooberApp(api: _seededServer(), tokenStore: store),
-    );
+    await tester.pumpWidget(GooberApp(api: _seededServer(), tokenStore: store));
     await tester.pumpAndSettle();
 
     // Nothing was signed in behind our back.
