@@ -56,8 +56,9 @@ in `server/README.md` and `app/README.md`.
 - **Schema:** `sqlx migrate` from `server/migrations/`; migrations run on startup.
   Times are stored as ISO-8601 UTC strings (`2027-07-04T18:30:00Z`) so they sort
   lexicographically and parse directly in the client.
-- **Dev testing harness:** `make scenario SEED=beach-trip USERS=bob,grandma` boots
-  a seeded server plus one emulator per person, each already signed in as them.
+- **Dev testing harness:** `make scenario SEED=beach-trip USERS=bob,grandma,jen`
+  (the default) boots a seeded server plus one emulator per person, each already
+  signed in as them.
   Both halves are dev-only and must stay impossible in a release build — the
   server seed sits behind the `dev-seed` cargo feature (off by default), the
   client auto-login behind `kDebugMode`. See `docs/dev-container.md`.
