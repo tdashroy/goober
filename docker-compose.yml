@@ -1,5 +1,9 @@
-name: goober
-
+# No `name:` here on purpose. The Compose project name decides what this stack's
+# containers and volumes are called, and it has to differ between checkouts —
+# otherwise two worktrees share one server database and one set of emulators. The
+# Makefile derives it from the working directory and exports it, so run these
+# services through `make` (see the Makefile) rather than a bare `docker compose`.
+#
 # `docker compose up` brings up the headless default stack (just the server). The
 # Android emulator is opt-in behind the `emulator` profile — it draws a native
 # window on the host desktop, so it is never part of the display-less default.

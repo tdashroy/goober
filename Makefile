@@ -1,7 +1,7 @@
 # Convenience targets for the containerized dev environment.
 # See docs/dev-container.md for the full guide.
 
-.PHONY: base up emulator scenario dev test down logs clean
+.PHONY: base up emulator scenario dev test down logs clean project
 
 # --- dev testing harness ---------------------------------------------------
 # `make scenario` seeds the server with a ready-made world and opens one emulator
@@ -19,6 +19,28 @@ USERS ?= bob,grandma,jen
 # One emulator service per person, generated because how many there are is up to
 # whoever runs the scenario. Rewritten by `make scenario`, removed by `make clean`.
 SCENARIO_FILE := docker-compose.scenario.yml
+
+# --- one Compose project per working directory -----------------------------
+# Compose prefixes both its containers and its named volumes with a project name
+# that, left alone, comes from the directory it runs in — and every clone and
+# every worktree of this repo is a directory called `goober`. Independent
+# checkouts therefore shared one stack: one server database (so a branch could
+# boot onto a database another branch had migrated, which the server refuses to
+# start against) and one set of emulator containers (so a run inherited whatever
+# app a different branch had already installed).
+#
+# So key the project to the absolute path of this working directory instead.
+# Same directory, same name — re-running here reuses this directory's own
+# containers, volumes and caches, which is what keeps repeat runs fast. Another
+# directory, another name — it gets its own set and cannot see, reuse, or (via
+# `down`/`clean`) destroy ours. The name is exported once, so every compose
+# invocation below is scoped to this directory's project without repeating it.
+#
+# `cksum` rather than one of the sha tools because it is the one checksum
+# command spelled the same on Linux and macOS; its digits are a valid Compose
+# project name, which must be lowercase `[a-z0-9_-]`.
+COMPOSE_PROJECT_NAME := goober-$(shell pwd -P | cksum | cut -d' ' -f1)
+export COMPOSE_PROJECT_NAME
 
 # Docker's default progress display redraws lines in place: BuildKit animates
 # build steps and Compose repaints a live status table. That flickers in the
@@ -87,6 +109,13 @@ down:
 # Follow logs (emulator boot progress, server output).
 logs:
 	docker compose $(COMPOSE_ANSI) logs -f
+
+# Print this directory's Compose project name, for the odd compose command you
+# have to run by hand: `docker compose -p "$(shell make -s project)" ps` inspects
+# the stack these targets built, where a bare `docker compose ps` would look at a
+# different project entirely.
+project:
+	@echo $(COMPOSE_PROJECT_NAME)
 
 # Stop and remove volumes (APK, server database, persisted build caches).
 # Profile-aware like `down` so the emulator-profile containers and their volumes
