@@ -95,6 +95,15 @@ the whole stack. See `docs/dev-container.md`. Key points:
   container, not the server, so the emulator container runs a `socat` bridge from
   its `:8080` to `server:8080`. Don't expect Compose DNS names to resolve inside
   the Android guest.
+- **Never boot the emulator `-read-only`.** It leaves the Android guest with no
+  IPv4 default route, so every `connect()` from the guest fails with
+  `ENETUNREACH` — the app can't reach `10.0.2.2:8080`, its seeded sign-in fails,
+  and `make scenario` silently comes up on onboarding instead of signed in. The
+  flag looks tempting for running several emulators at once, but it buys nothing
+  here: the AVD is baked into the image, so each container already boots its own
+  private writable copy and there is no shared AVD to protect. The entrypoint
+  pings `10.0.2.2` after boot and shouts if the guest can't reach the server, so
+  this can't go unnoticed again.
 - The emulator container is **privileged** with `/dev/kvm` and `/dev/dri` mapped
   in and the host X socket (`/tmp/.X11-unix`) mounted; it runs with `DISPLAY=:0`
   so its Qt window renders through the host X server as a native desktop window.

@@ -153,7 +153,11 @@ EMULATOR_GPU=swiftshader_indirect make emulator
 ```
 
 The entrypoint logs the chosen backend and, at startup, whether it can reach your
-X server and what GL renderer `/dev/dri` provides.
+X server and what GL renderer `/dev/dri` provides. After boot it also checks that
+the Android guest can reach the server through the `socat` bridge and logs
+`guest reaches the server ✓`, or a loud multi-line `WARNING` banner if it cannot
+(retrying for `SERVER_REACH_TIMEOUT` seconds, default 60, while the server
+starts).
 
 ## Hot-reload dev loop (`make dev`)
 
@@ -293,8 +297,10 @@ Because the profile is compiled in, "two people at once" means two APKs:
 `app-debug-grandma.apk`), and each emulator installs its own. Each window shows a
 corner banner with the person's name so you can tell them apart at a glance.
 
-If the server isn't seeded (or isn't up yet), the app quietly falls back to the
-normal login flow rather than stranding itself.
+If the server isn't seeded (or isn't up yet), the app falls back to the normal
+login flow rather than stranding itself. In a debug build it also logs the
+underlying error to the device log, so a broken harness leaves a trace instead of
+looking exactly like an unseeded one.
 
 ### Guardrails: none of this can ship
 
@@ -401,6 +407,12 @@ Port: server on `8080`. (No viewer port — the emulator is a native window.)
   `EMULATOR_GPU=swiftshader_indirect make emulator`.
 - **App shows a connection error** — check the `server` container is healthy
   (`docker compose ps`) and that `make logs` shows the socat bridge line.
+- **App boots to onboarding (`Start your beach trip`) instead of signed in as its
+  seeded person** — the guest can't reach the server, so the seeded sign-in
+  failed. `make logs` shows the entrypoint's `WARNING` banner about `10.0.2.2`.
+  Confirm the `server` container is up and `socat` is bridging (`/tmp/socat.log`),
+  and make sure the emulator is **not** booted `-read-only` — that flag leaves the
+  guest with no IPv4 default route.
 
 ## Fallback: native-host emulator
 
