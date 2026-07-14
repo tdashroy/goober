@@ -100,7 +100,11 @@ the whole stack. See `docs/dev-container.md`. Key points:
   `make down`/`make clean` here cannot touch another checkout's. Don't put a
   `name:` back in `docker-compose.yml`, and **run the stack through `make`** — a
   bare `docker compose` in the checkout lands in a different project (`make
-  project` prints the right one to pass to `-p`).
+  project` prints the right one to pass to `-p`). The one thing the project name
+  cannot isolate is the server's **published host port**, which belongs to the
+  machine: two checkouts up *at the same time* need `make scenario PORT=8081` in
+  the second. That moves host access only — the emulators reach the server over
+  the Compose network, so a `PORT=` run boots like any other.
 - **Build order matters:** the build/test and emulator images `FROM
   goober-base:latest`, so build the base first — `make base` (Compose does not
   order `FROM` dependencies). `make up` runs the headless default stack (just the
