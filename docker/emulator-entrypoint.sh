@@ -7,6 +7,13 @@ set -euo pipefail
 
 SERVER_HOST="${SERVER_HOST:-server}"
 SERVER_PORT="${SERVER_PORT:-8080}"
+# The port the guest reaches us on, as 10.0.2.2:$GUEST_PORT. Distinct from
+# SERVER_PORT, which is the *upstream* port on the server container that we
+# forward to: the two happen to both be 8080 today, but they are not the same
+# thing. This is the one the socat listener binds and the one the reachability
+# check probes, so those two can never drift apart. It has to match the base URL
+# the app is compiled with, so treat it as fixed unless the app changes too.
+GUEST_PORT="${GUEST_PORT:-8080}"
 APK_PATH="${APK_PATH:-/apk/app-debug.apk}"
 APP_ID="${APP_ID:-com.tdashroy.goober}"
 AVD_NAME="${AVD_NAME:-goober}"
@@ -49,9 +56,9 @@ else
 fi
 
 # Inside the guest, the host loopback (10.0.2.2) is this container. Forward this
-# container's :8080 to the server service so the app's default base URL works.
-log "bridging :8080 -> ${SERVER_HOST}:${SERVER_PORT} (reachable from the guest at 10.0.2.2:8080)"
-socat TCP-LISTEN:8080,fork,reuseaddr "TCP:${SERVER_HOST}:${SERVER_PORT}" >/tmp/socat.log 2>&1 &
+# container's $GUEST_PORT to the server service so the app's default base URL works.
+log "bridging :${GUEST_PORT} -> ${SERVER_HOST}:${SERVER_PORT} (reachable from the guest at 10.0.2.2:${GUEST_PORT})"
+socat "TCP-LISTEN:${GUEST_PORT},fork,reuseaddr" "TCP:${SERVER_HOST}:${SERVER_PORT}" >/tmp/socat.log 2>&1 &
 
 # Self-heal stale AVD lock/running state before launching. When `make emulator`
 # is interrupted with Ctrl-C, Compose STOPS the container but does not remove it
@@ -91,6 +98,50 @@ until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
   sleep 2
 done
 log "boot completed"
+
+# Prove the guest can actually reach the server before we hand over a window.
+# Everything the app does — not least signing in as its seeded person — goes to
+# 10.0.2.2:$GUEST_PORT, the guest's alias for this container, which socat bridges
+# on to the server. When that path is broken the app just falls back to
+# onboarding, a silent failure that looks exactly like "not seeded yet". So say
+# so, loudly.
+#
+# The ping proves the guest has IPv4 routing to 10.0.2.2 at all; the connect
+# proves the bridge behind it is live and the server is answering. The server may
+# still be starting up, so retry before giving up.
+check_guest_can_reach_server() {
+  adb shell ping -c1 -W2 10.0.2.2 >/dev/null 2>&1 || return 1
+  # A bare TCP connect to the port socat listens on — the same one the app uses.
+  # The guest's toybox nc has no -z, so close stdin immediately and let a clean
+  # exit stand for "connected".
+  adb shell "echo | nc -w2 10.0.2.2 ${GUEST_PORT}" >/dev/null 2>&1
+}
+
+log "checking the guest can reach the server at 10.0.2.2:${GUEST_PORT}"
+reach_waited=0
+reach_timeout="${SERVER_REACH_TIMEOUT:-60}"
+reachable=0
+while [ "$reach_waited" -le "$reach_timeout" ]; do
+  if check_guest_can_reach_server; then
+    reachable=1
+    break
+  fi
+  sleep 2
+  reach_waited=$((reach_waited + 2))
+done
+
+if [ "$reachable" = "1" ]; then
+  log "guest reaches the server ✓"
+else
+  log "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  log "!! WARNING: the guest CANNOT reach the server at 10.0.2.2:${GUEST_PORT}."
+  log "!! The app will fail to sign in and will fall back to onboarding"
+  log "!! ('Start your beach trip') instead of booting as its seeded person."
+  log "!! Check that the server container is up, that socat is bridging (see"
+  log "!! /tmp/socat.log), and that the emulator is NOT booted -read-only —"
+  log "!! that flag leaves the guest with no IPv4 default route."
+  log "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+fi
 
 # Force the classic 3-button navigation bar (Back / Home / Recents) instead of
 # gesture navigation, so the buttons are always on-screen and clickable — a
