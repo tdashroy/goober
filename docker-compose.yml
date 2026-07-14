@@ -26,8 +26,14 @@ services:
         # server that cannot seed, which is what a deploy would build.
         SERVER_FEATURES: ${SERVER_FEATURES-dev-seed}
     image: goober-server:latest
+    # Published so you can reach the server from the host (curl, a browser). A
+    # host port is the one thing a per-checkout Compose project cannot keep to
+    # itself — it is global to the machine — so two checkouts running at once
+    # would fight over it. Hence the override: `make up PORT=8081` in the second
+    # one. The emulators are unaffected either way; they reach the server over
+    # the Compose network on its container port, never through this.
     ports:
-      - "8080:8080"
+      - "${GOOBER_SERVER_PORT:-8080}:8080"
     environment:
       # Name a seed profile (`SEED_PROFILE=beach-trip`, or `make scenario
       # SEED=beach-trip`) and the server boots with that ready-made world already

@@ -54,6 +54,23 @@ raw `docker compose` in the checkout falls back to the directory-name project an
 lands outside the one `make` manages. If you need the raw command, take the name
 with you: `docker compose -p "$(make -s project)" ps`.
 
+#### The one thing a project cannot isolate: the host port
+
+The server is published on host port **8080**, and a host port belongs to the
+machine, not to a Compose project. Two checkouts running **at the same time** will
+fight over it — the second one's server fails to start with `Bind for
+0.0.0.0:8080 failed: port is already allocated`. So tell them apart by hand:
+
+```sh
+make scenario PORT=8081     # in the second checkout
+```
+
+Only *host* access moves. The emulators reach the server over the Compose network
+on its container port, so they neither know nor care which host port it is
+published on — a `PORT=` scenario boots exactly like any other. (Running the
+checkouts one after another needs none of this; the collision is only while both
+are up.)
+
 Upgrading an existing machine? Checkouts from before this change left their
 containers and volumes behind under the old shared `goober` project, which `make
 clean` no longer reaches. Sweep them once with:
@@ -446,6 +463,9 @@ make clean         # stop and remove volumes (APK, server DB, build caches)
 make project       # print this checkout's Compose project name
 ```
 
+Any target takes `PORT=` to publish the server somewhere other than `8080` —
+needed only when two checkouts run at once.
+
 `down` and `clean` act only on **this checkout's** stack — see [one Compose
 project per checkout](#one-compose-project-per-checkout--go-through-make).
 
@@ -456,7 +476,8 @@ Docker output is **plain and append-only by default** (no in-place redraw), so
 the terminal stays calm. Prefix any target with `VERBOSE=1` (e.g. `VERBOSE=1 make
 emulator`) to restore Docker's animated build progress and live status table.
 
-Port: server on `8080`. (No viewer port — the emulator is a native window.)
+Port: server on `8080` by default, `PORT=` to move it. (No viewer port — the
+emulator is a native window.)
 
 ## Troubleshooting
 

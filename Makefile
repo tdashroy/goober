@@ -42,6 +42,15 @@ SCENARIO_FILE := docker-compose.scenario.yml
 COMPOSE_PROJECT_NAME := goober-$(shell pwd -P | cksum | cut -d' ' -f1)
 export COMPOSE_PROJECT_NAME
 
+# The host port the server is published on — the one resource a per-directory
+# project cannot isolate, because a host port belongs to the machine, not to a
+# Compose project. Two checkouts running at the same time therefore have to be
+# told apart by hand: `make up PORT=8081` (or `make scenario PORT=8081`) in the
+# second one. Only host access moves; the emulators reach the server over the
+# Compose network on its container port and never notice.
+PORT ?= 8080
+export GOOBER_SERVER_PORT := $(PORT)
+
 # Docker's default progress display redraws lines in place: BuildKit animates
 # build steps and Compose repaints a live status table. That flickers in the
 # terminal, so default to calm, append-only output — plain build progress and no
