@@ -87,6 +87,20 @@ in `server/README.md` and `app/README.md`.
 No host Flutter/Android toolchain needed — `docker/` + `docker-compose.yml` run
 the whole stack. See `docs/dev-container.md`. Key points:
 
+- **Each working directory gets its own Compose project.** Compose names both its
+  containers and its named volumes after a project it derives from the directory
+  it runs in — and every clone and worktree of this repo is a directory called
+  `goober`, so they all shared one stack: one server database (a branch would boot
+  onto a database another branch had migrated, which the server refuses to start
+  against) and one set of emulator containers (a run would inherit another
+  branch's installed app). The `Makefile` therefore derives
+  `COMPOSE_PROJECT_NAME` from the absolute path of the working directory and
+  exports it, so every target is scoped to that directory: the same directory
+  reuses its own containers/volumes/caches, a different one gets its own, and a
+  `make down`/`make clean` here cannot touch another checkout's. Don't put a
+  `name:` back in `docker-compose.yml`, and **run the stack through `make`** — a
+  bare `docker compose` in the checkout lands in a different project (`make
+  project` prints the right one to pass to `-p`).
 - **Build order matters:** the build/test and emulator images `FROM
   goober-base:latest`, so build the base first — `make base` (Compose does not
   order `FROM` dependencies). `make up` runs the headless default stack (just the

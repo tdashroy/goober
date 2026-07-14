@@ -14,7 +14,7 @@ needs one.
 | Piece | Container | How you use it | Needs a display? |
 |---|---|---|---|
 | Rust `axum` + SQLite server | `server` | `http://localhost:8080` | No |
-| Static analysis + headless tests | `test` | `docker compose run --rm test` | No |
+| Static analysis + headless tests | `test` | `make test` | No |
 | Debug APK build (feeds the emulator) | `apk-builder` | runs on `make emulator`, then exits | No |
 | Android emulator with the app installed | `emulator` | native window on your desktop | **Yes** |
 | Interactive Flutter hot-reload loop | `dev` | `make dev` (attaches to a running emulator) | via the emulator |
@@ -23,10 +23,44 @@ needs one.
 The `server` and `test` pieces are the **default, headless stack**. The
 `apk-builder` and `emulator` pieces are **opt-in** behind the `emulator` compose
 profile, so a machine with no display can still build, test, and run the server
-with `docker compose up` untouched.
+with the default `make up` stack untouched.
 
 All four share one **base image** (`docker/base.Dockerfile`) that holds the
 Flutter SDK, Android SDK, and JDK 17, so the toolchain is installed once.
+
+### One Compose project per checkout — go through `make`
+
+Compose names its containers and its named volumes after a **project**, and left
+to itself it takes that name from the directory it runs in. Every clone and every
+worktree of this repo is a directory called `goober`, so out of the box they all
+shared *one* stack — one server database, one APK volume, one set of emulator
+containers. That bites in ways that look like unrelated bugs: a branch boots onto
+a database some other branch has already migrated and the server refuses to start
+against it, or a run inherits an emulator with another branch's app still
+installed.
+
+So the `Makefile` derives the project name from the **absolute path of the working
+directory** (`goober-<checksum of $PWD>`) and exports it, which scopes every
+compose invocation — `up`, `emulator`, `scenario`, `dev`, `test`, `down`, `logs`,
+`clean` — to that directory alone. Two consequences worth knowing:
+
+- Re-running in the **same** directory reuses that directory's own containers,
+  volumes and build caches, so repeat runs stay fast.
+- A **different** checkout gets its own set. It cannot see or reuse yours, and its
+  `make down` / `make clean` cannot destroy yours.
+
+The corollary: **run the stack through `make`, not a bare `docker compose`.** A
+raw `docker compose` in the checkout falls back to the directory-name project and
+lands outside the one `make` manages. If you need the raw command, take the name
+with you: `docker compose -p "$(make -s project)" ps`.
+
+Upgrading an existing machine? Checkouts from before this change left their
+containers and volumes behind under the old shared `goober` project, which `make
+clean` no longer reaches. Sweep them once with:
+
+```sh
+docker compose -p goober down -v --remove-orphans
+```
 
 ### Persisted build caches
 
@@ -126,7 +160,7 @@ make emulator
 ## Run the server (headless default stack)
 
 ```sh
-make up            # == docker compose up --build
+make up            # server only, built and started
 ```
 
 This starts **only the server** (reachable at `http://localhost:8080`). It needs
@@ -152,7 +186,7 @@ alternative that avoids opening it to all local users is an xauth cookie; see
 **Launch it:**
 
 ```sh
-make emulator      # == docker compose --profile emulator up --build
+make emulator      # server + APK build + emulator, built and started
 ```
 
 On `make emulator`, Compose:
@@ -162,7 +196,7 @@ On `make emulator`, Compose:
 3. starts **emulator**, which boots Android (KVM-accelerated), opens its window
    on your desktop, installs the APK, and launches the app.
 
-Watch progress with `make logs` (or `docker compose logs -f emulator`). The
+Watch progress with `make logs`. The
 emulator prints `boot completed` and then `ready` once the app is up; the window
 appears on your desktop during boot.
 
@@ -376,7 +410,7 @@ SERVER_FEATURES= SEED_PROFILE=beach-trip make up     # warns and ignores the see
 ## Run the tests (no host Flutter, no display)
 
 ```sh
-make test          # == docker compose run --rm test
+make test          # analyze + headless tests, in a throwaway container
 ```
 
 This runs `flutter analyze` and the headless widget/unit tests in the build/test
@@ -409,7 +443,11 @@ make test          # analyze + headless tests
 make logs          # follow logs
 make down          # stop the stack (takes any extra scenario emulators with it)
 make clean         # stop and remove volumes (APK, server DB, build caches)
+make project       # print this checkout's Compose project name
 ```
+
+`down` and `clean` act only on **this checkout's** stack — see [one Compose
+project per checkout](#one-compose-project-per-checkout--go-through-make).
 
 `make scenario` takes `SEED=` (which world) and `USERS=` (which people, one
 emulator each); it defaults to `SEED=beach-trip USERS=bob,grandma,jen`.
@@ -436,7 +474,8 @@ Port: server on `8080`. (No viewer port — the emulator is a native window.)
 - **Window appears but rendering is glitchy** — switch to software GL:
   `EMULATOR_GPU=swiftshader_indirect make emulator`.
 - **App shows a connection error** — check the `server` container is healthy
-  (`docker compose ps`) and that `make logs` shows the socat bridge line.
+  (`docker compose -p "$(make -s project)" ps`) and that `make logs` shows the
+  socat bridge line.
 - **App boots to onboarding (`Start your beach trip`) instead of signed in as its
   seeded person** — the guest can't reach the server, so the seeded sign-in
   failed. `make logs` shows the entrypoint's `WARNING` banner about `10.0.2.2`.
