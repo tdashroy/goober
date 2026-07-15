@@ -2,9 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:goober/src/api_client.dart';
+import 'package:goober/src/feed_stream.dart';
 import 'package:goober/src/models.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+import 'fake_stream_client.dart';
 
 /// A response shaped like the server's: UTF-8 bytes under a bare
 /// `application/json` (no charset), which is what axum sends. `http` falls back
@@ -580,6 +583,111 @@ void main() {
           isA<ApiException>()
               .having((e) => e.statusCode, 'statusCode', 403)
               .having((e) => e.message, 'message', 'forbidden'),
+        ),
+      );
+    });
+  });
+
+  group('ApiClient feed stream', () {
+    Map<String, dynamic> rideJson({String id = 'r1', String status = 'open'}) =>
+        {
+          'id': id,
+          'group_id': 'g1',
+          'status': status,
+          'passenger': {'id': 'p1', 'display_name': 'Emily'},
+          'driver': null,
+          'targets': [
+            {'id': 't1', 'display_name': 'Wendel'},
+          ],
+          'responses': <Map<String, dynamic>>[],
+          'pickup': {
+            'id': 'pl1',
+            'group_id': 'g1',
+            'name': 'The Pier',
+            'lat': 38.9,
+            'lng': -75.1,
+          },
+          'dropoff': {
+            'id': 'pl2',
+            'group_id': 'g1',
+            'name': "Grandma's",
+            'lat': 38.8,
+            'lng': -75.0,
+          },
+          'party_size': 1,
+          'party': <Map<String, dynamic>>[],
+          'offer': null,
+          'scheduled_for': null,
+          'created_at': '2027-07-04T18:00:00Z',
+        };
+
+    test('opens the stream path with the bearer token', () async {
+      late http.BaseRequest captured;
+      final client = MockClient((req) async {
+        captured = req;
+        return http.Response('', 200);
+      });
+      final api = ApiClient(baseUrl: 'http://test', client: client);
+
+      // An empty 200 body is a stream that carries no events and ends at once.
+      await api.streamFeed(groupId: 'g1', token: 'tok-123').toList();
+
+      expect(captured.method, 'GET');
+      expect(captured.url.toString(), 'http://test/groups/g1/feed/stream');
+      expect(captured.headers['Authorization'], 'Bearer tok-123');
+    });
+
+    test('parses a ride delta pushed down the connection', () async {
+      final fake = FakeStreamClient(
+        MockClient((req) async => http.Response('not found', 404)),
+      );
+      final api = ApiClient(baseUrl: 'http://test', client: fake);
+
+      // Collect until the connection drops, then assert on what came down it.
+      final collected = api
+          .streamFeed(groupId: 'g1', token: 'tok-123')
+          .toList();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      fake.push(rideJson(id: 'r1', status: 'accepted'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      fake.drop();
+
+      final events = await collected;
+      expect(events, hasLength(1));
+      final event = events.single;
+      expect(event, isA<RideChanged>());
+      expect((event as RideChanged).ride.id, 'r1');
+      expect(event.ride.status, 'accepted');
+    });
+
+    test('a resync event becomes a FeedResync', () async {
+      final fake = FakeStreamClient(
+        MockClient((req) async => http.Response('not found', 404)),
+      );
+      final api = ApiClient(baseUrl: 'http://test', client: fake);
+
+      final collected = api
+          .streamFeed(groupId: 'g1', token: 'tok-123')
+          .toList();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      fake.pushRaw('event: resync\ndata:\n\n');
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      fake.drop();
+
+      final events = await collected;
+      expect(events.single, isA<FeedResync>());
+    });
+
+    test('surfaces a non-2xx as an ApiException', () async {
+      final client = MockClient((req) async {
+        return http.Response(jsonEncode({'error': 'forbidden'}), 403);
+      });
+      final api = ApiClient(baseUrl: 'http://test', client: client);
+
+      expect(
+        () => api.streamFeed(groupId: 'g1', token: 'x').toList(),
+        throwsA(
+          isA<ApiException>().having((e) => e.statusCode, 'statusCode', 403),
         ),
       );
     });

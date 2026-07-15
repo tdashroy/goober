@@ -11,6 +11,8 @@ import 'package:goober/src/token_store.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'fake_stream_client.dart';
+
 /// A MockClient that answers create-group and feed calls like the real server.
 ApiClient _fakeServer() {
   final client = MockClient((req) async {
@@ -39,7 +41,7 @@ ApiClient _fakeServer() {
     }
     return http.Response('not found', 404);
   });
-  return ApiClient(baseUrl: 'http://test', client: client);
+  return ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client));
 }
 
 /// A MockClient whose feed endpoint rejects the persisted token with a 401,
@@ -51,7 +53,7 @@ ApiClient _staleTokenServer() {
     }
     return http.Response('not found', 404);
   });
-  return ApiClient(baseUrl: 'http://test', client: client);
+  return ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client));
 }
 
 Session _persistedSession() => const Session(

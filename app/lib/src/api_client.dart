@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'feed_stream.dart';
 import 'models.dart';
 
 /// Thrown when the server returns a non-2xx response. Carries the status and
@@ -89,6 +90,65 @@ class ApiClient {
       headers: _authHeaders(token),
     );
     return Feed.fromJson(_decode(resp));
+  }
+
+  /// Open the group's live feed stream: one Server-Sent Events connection that
+  /// pushes a [FeedEvent] for every change the feed reflects — a new request, an
+  /// answer, a lifecycle step — so an open board updates itself without polling.
+  ///
+  /// This is the live overlay only; the initial board still comes from
+  /// [fetchFeed], which stays the source of truth. Same auth and group-scoping as
+  /// the feed: a non-2xx (401/403) throws an [ApiException] just like the REST
+  /// calls. The returned stream ends when the connection drops — [LiveFeed] wraps
+  /// this with reconnection.
+  Stream<FeedEvent> streamFeed({
+    required String groupId,
+    required String token,
+  }) async* {
+    final request = http.Request(
+      'GET',
+      Uri.parse('$baseUrl/groups/$groupId/feed/stream'),
+    );
+    request.headers['Authorization'] = 'Bearer $token';
+    request.headers['Accept'] = 'text/event-stream';
+
+    final resp = await _client.send(request);
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      // Drain the body so the connection is released, then surface the failure
+      // the same way the REST decode does.
+      await resp.stream.drain<void>();
+      throw ApiException(resp.statusCode, 'feed stream failed');
+    }
+
+    // The server sends UTF-8; decode explicitly rather than trusting a default.
+    final lines = resp.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+    await for (final message in parseServerSentEvents(lines)) {
+      final event = _feedEventFrom(message);
+      if (event != null) yield event;
+    }
+  }
+
+  /// Map one parsed SSE message to a [FeedEvent], or null for one this build
+  /// doesn't recognise — a newer server may send event kinds this app hasn't
+  /// heard of, and one unknown line shouldn't break the stream.
+  FeedEvent? _feedEventFrom(SseMessage message) {
+    switch (message.event) {
+      case 'ride':
+        try {
+          final json = jsonDecode(message.data) as Map<String, dynamic>;
+          return RideChanged(
+            Ride.fromJson(json['ride'] as Map<String, dynamic>),
+          );
+        } catch (_) {
+          return null;
+        }
+      case 'resync':
+        return const FeedResync();
+      default:
+        return null;
+    }
   }
 
   /// Fetch the group roster — everyone in the group, i.e. everyone the caller
