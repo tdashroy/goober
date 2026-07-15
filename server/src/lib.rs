@@ -3,9 +3,10 @@
 //! Scope so far: create a group (creator = admin), join a group with name +
 //! phone (re-attach by phone), bearer-token auth on every authenticated request,
 //! the group's curated places, requesting a ride as a direct ping to a set of
-//! members, the group-visible feed of those rides, and the ride lifecycle the
-//! people pinged drive — answering the ping, claiming the ride, arriving,
-//! delivering — with every step audited. SSE, push and points come later.
+//! members, the group-visible feed of those rides, the ride lifecycle the people
+//! pinged drive — answering the ping, claiming the ride, arriving, delivering —
+//! with every step audited, and a live SSE stream that pushes each of those feed
+//! changes to open clients. Push and points come later.
 //!
 //! The app is built by [`build_app`] from a [`SqlitePool`], so tests can drive
 //! the exact same router against a throwaway database without a live server.
@@ -13,6 +14,7 @@
 pub mod auth;
 pub mod db;
 pub mod error;
+pub mod hub;
 pub mod models;
 pub mod routes;
 
@@ -26,14 +28,19 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use sqlx::SqlitePool;
 
-/// Build the axum application. The `SqlitePool` is the router's state, which the
-/// [`CurrentMember`](crate::auth::CurrentMember) extractor reads for auth.
+use crate::hub::AppState;
+
+/// Build the axum application. The router's state is an [`AppState`] — the
+/// `SqlitePool` the [`CurrentMember`](crate::auth::CurrentMember) extractor reads
+/// for auth, plus the [`FeedHub`](crate::hub::FeedHub) the write paths publish
+/// feed deltas to and the SSE stream subscribes from.
 pub fn build_app(pool: SqlitePool) -> Router {
     let app = Router::new()
         .route("/health", get(routes::health))
         .route("/groups", post(routes::create_group))
         .route("/groups/{group_id}/join", post(routes::join_group))
         .route("/groups/{group_id}/feed", get(routes::feed))
+        .route("/groups/{group_id}/feed/stream", get(routes::feed_stream))
         .route("/groups/{group_id}/members", get(routes::roster))
         .route("/groups/{group_id}/rides", post(routes::create_ride))
         .route(
@@ -56,5 +63,5 @@ pub fn build_app(pool: SqlitePool) -> Router {
     #[cfg(feature = "dev-seed")]
     let app = app.route("/dev/session/{member_key}", get(seed::dev_session));
 
-    app.with_state(pool)
+    app.with_state(AppState::new(pool))
 }

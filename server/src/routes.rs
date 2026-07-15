@@ -2,18 +2,25 @@
 //! ride, and read the group's feed.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 
 use axum::extract::{Path, State};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use chrono::{DateTime, SecondsFormat, Utc};
+use futures_core::Stream;
 use sqlx::SqlitePool;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::auth::{generate_token, CurrentMember};
 use crate::error::{AppError, AppResult};
+use crate::hub::FeedHub;
 use crate::models::{
-    AuthResponse, CopyPlacesRequest, CreateGroupRequest, CreateRideRequest, FeedResponse,
-    JoinGroupRequest, Member, MemberRef, MemberView, Place, PlaceRequest, PlaceView,
+    AuthResponse, CopyPlacesRequest, CreateGroupRequest, CreateRideRequest, FeedDelta,
+    FeedResponse, JoinGroupRequest, Member, MemberRef, MemberView, Place, PlaceRequest, PlaceView,
     PlacesResponse, RideAction, RideActionRequest, RideResponseView, RideView, RosterMember,
     RosterResponse, MAX_PARTY_SIZE, RIDE_ACCEPTED, RIDE_ARRIVED, RIDE_DELIVERED,
     RIDE_EVENT_REQUESTED, RIDE_OPEN,
@@ -184,6 +191,50 @@ pub async fn feed(
         group_id: group.id,
         group_name: group.name,
     }))
+}
+
+/// `GET /groups/{group_id}/feed/stream` — the group's feed as a live
+/// Server-Sent Events stream.
+///
+/// Same gate as [`feed`]: a valid token, and only for a group the caller belongs
+/// to. The initial board still comes from `GET /groups/{group_id}/feed`; this
+/// stream layers the changes on top of it. Every mutation the feed reflects — a
+/// new request, an answer, a lifecycle step — is published here by the write path
+/// that made it, as one `ride` event carrying that ride's current state, so an
+/// open board updates itself without polling.
+///
+/// Only deltas travel down the stream; commands still go over REST. A subscriber
+/// that falls behind the channel's buffer is sent a `resync` event instead of a
+/// stale delta — the cue to refetch the whole board, which converges it exactly.
+pub async fn feed_stream(
+    State(hub): State<FeedHub>,
+    CurrentMember(member): CurrentMember,
+    Path(group_id): Path<String>,
+) -> AppResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+    require_group_member(&member, &group_id)?;
+
+    let stream = BroadcastStream::new(hub.subscribe(&group_id)).map(|item| {
+        let event = match item {
+            Ok(delta) => Event::default()
+                .event("ride")
+                .json_data(delta)
+                // A ride the server just built always serializes; fall back to a
+                // resync nudge rather than tearing the stream down on the
+                // impossible case.
+                .unwrap_or_else(|_| resync_event()),
+            Err(BroadcastStreamRecvError::Lagged(_)) => resync_event(),
+        };
+        Ok(event)
+    });
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// A "refetch the whole board" nudge — sent when a subscriber has fallen behind,
+/// so the client reconverges from the REST feed rather than acting on partial
+/// state.
+fn resync_event() -> Event {
+    Event::default().event("resync").data("")
 }
 
 /// `GET /groups/{group_id}/members` — the group roster: everyone the caller can
@@ -417,6 +468,7 @@ async fn places_response(pool: &SqlitePool, group_id: &str) -> AppResult<PlacesR
 /// never reach across groups — an id from another group reads as not found.
 pub async fn create_ride(
     State(pool): State<SqlitePool>,
+    State(hub): State<FeedHub>,
     CurrentMember(member): CurrentMember,
     Path(group_id): Path<String>,
     Json(req): Json<CreateRideRequest>,
@@ -548,11 +600,7 @@ pub async fn create_ride(
 
     tx.commit().await?;
 
-    load_rides(&pool, &group_id, Some(&ride_id))
-        .await?
-        .pop()
-        .map(Json)
-        .ok_or(AppError::NotFound("ride"))
+    publish_ride(&pool, &hub, &group_id, &ride_id).await
 }
 
 /// `POST /groups/{group_id}/rides/{ride_id}/actions` — move a ride along.
@@ -573,6 +621,7 @@ pub async fn create_ride(
 /// Every step, legal and taken, is written to the ride's audit trail.
 pub async fn ride_action(
     State(pool): State<SqlitePool>,
+    State(hub): State<FeedHub>,
     CurrentMember(member): CurrentMember,
     Path((group_id, ride_id)): Path<(String, String)>,
     Json(req): Json<RideActionRequest>,
@@ -770,11 +819,25 @@ pub async fn ride_action(
 
     tx.commit().await?;
 
-    load_rides(&pool, &group_id, Some(&ride_id))
+    publish_ride(&pool, &hub, &group_id, &ride_id).await
+}
+
+/// Load the ride just written, publish it to the group's live feed subscribers,
+/// and hand the same view back to the caller as the REST response. The delta and
+/// the response are one and the same ride, so a client that made the change and
+/// one that is only watching converge on identical state.
+async fn publish_ride(
+    pool: &SqlitePool,
+    hub: &FeedHub,
+    group_id: &str,
+    ride_id: &str,
+) -> AppResult<Json<RideView>> {
+    let view = load_rides(pool, group_id, Some(ride_id))
         .await?
         .pop()
-        .map(Json)
-        .ok_or(AppError::NotFound("ride"))
+        .ok_or(AppError::NotFound("ride"))?;
+    hub.publish(group_id, FeedDelta { ride: view.clone() });
+    Ok(Json(view))
 }
 
 /// The ride is no longer on offer, so there's nothing for the people pinged to

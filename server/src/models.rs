@@ -114,7 +114,7 @@ pub struct Place {
 }
 
 /// Public view of a place — the JSON shape returned to clients.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PlaceView {
     pub id: String,
     pub group_id: String,
@@ -212,7 +212,7 @@ fn default_party_size() -> i64 {
 
 /// A person as they appear inside a ride — just enough to show a name. The feed
 /// is a public board, so it carries no phone numbers.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MemberRef {
     pub id: String,
     pub display_name: String,
@@ -300,7 +300,7 @@ pub struct RideActionRequest {
 }
 
 /// What one pinged member said back, as the feed shows it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RideResponseView {
     /// The pinged member who answered.
     pub member: MemberRef,
@@ -314,7 +314,7 @@ pub struct RideResponseView {
 /// A ride as the group's feed shows it: who asked, who was pinged, what they
 /// said back, who's driving, the route, the party, the offer, and when it's
 /// wanted for.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RideView {
     pub id: String,
     pub group_id: String,
@@ -339,4 +339,15 @@ pub struct RideView {
     /// `None` means "now"; otherwise the time the ride is wanted for.
     pub scheduled_for: Option<String>,
     pub created_at: String,
+}
+
+/// One change to a group's feed, pushed to live subscribers over the SSE stream.
+///
+/// It carries the whole ride as the feed now shows it, so a client applies the
+/// change by replacing (or inserting) that one ride in its list — no re-fetch of
+/// the entire board. The REST feed remains the initial load and source of truth;
+/// a delta only layers the latest state of a single ride on top.
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedDelta {
+    pub ride: RideView,
 }

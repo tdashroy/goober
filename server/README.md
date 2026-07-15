@@ -14,6 +14,7 @@ HTTP** — cloud deployment over HTTPS comes later.
 | POST   | `/groups/{group_id}/join`    | –      | Join with name + phone; re-attaches by phone |
 | GET    | `/me`                        | bearer | The caller's identity |
 | GET    | `/groups/{group_id}/feed`    | bearer | Group activity feed: the group's rides, newest first |
+| GET    | `/groups/{group_id}/feed/stream` | bearer | Live feed as Server-Sent Events: one `ride` delta per change |
 | GET    | `/groups/{group_id}/members` | bearer | The group roster — who you can ping for a ride |
 | POST   | `/groups/{group_id}/rides`   | bearer | Request a ride (direct ping to a set of members) |
 | POST   | `/groups/{group_id}/rides/{ride_id}/actions` | bearer | Move a ride along: answer a ping, arrive, deliver |
@@ -50,6 +51,16 @@ group*, so an id from another group reads as `404`, and a token from another
 group is `403`. A new request is `open` and immediately appears in that group's
 feed — which is shared, not personal: everyone in the group sees every ride, with
 its route, party size, and offer.
+
+**Live feed:** `GET /groups/{group_id}/feed/stream` is the same feed as a
+Server-Sent Events stream, gated by the same token + membership check. Each change
+the feed reflects — a new request, an answer, a lifecycle step — is published to
+every open subscriber of that group as one `ride` event carrying the ride as the
+feed now shows it, so a client applies it by replacing that one ride with no
+re-fetch. The fan-out is an in-memory `broadcast` channel per group; only deltas
+travel down the stream (commands still go over the REST routes above). A
+subscriber that falls behind is sent a `resync` event — the cue to refetch the
+whole feed and converge.
 
 **The ride lifecycle** (`open` → `accepted` → `arrived` → `delivered`) is the
 server's to enforce: `POST .../rides/{ride_id}/actions` takes `{ action,
