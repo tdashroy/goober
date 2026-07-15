@@ -5,13 +5,17 @@
 //! network. This is the "testable without a deployed server" requirement made
 //! concrete.
 
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
+use axum::response::Response;
 use axum::Router;
 use goober_server::{build_app, db};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
+use tokio::time::timeout;
 use tower::ServiceExt;
 
 /// Build a router backed by a clean in-memory DB.
@@ -2177,4 +2181,195 @@ async fn a_ride_cannot_be_moved_along_from_outside_its_group() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ----- the live feed stream (SSE) -----
+
+/// Open the group's SSE feed stream without draining it — the streaming body is
+/// held open, so it is read one event at a time with [`next_stream_event`]
+/// rather than collected like an ordinary response.
+async fn open_stream(app: &Router, group_id: &str, token: &str) -> Response {
+    app.clone()
+        .oneshot(get_with_token(
+            &format!("/groups/{group_id}/feed/stream"),
+            token,
+        ))
+        .await
+        .expect("open stream")
+}
+
+/// Pull the next Server-Sent Event off a stream body as (event name, parsed data
+/// JSON). Reads frames until it has a blank-line-terminated event, so it doesn't
+/// matter how the bytes are chunked. Times out rather than hanging if nothing
+/// arrives.
+async fn next_stream_event(body: &mut Body) -> (String, Value) {
+    let mut buf = String::new();
+    while !buf.contains("\n\n") {
+        let frame = timeout(Duration::from_secs(2), body.frame())
+            .await
+            .expect("timed out waiting for an SSE event")
+            .expect("stream ended before an event arrived")
+            .expect("stream frame error");
+        if let Ok(bytes) = frame.into_data() {
+            buf.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+
+    let mut event = String::new();
+    let mut data = String::new();
+    for line in buf.lines() {
+        if let Some(rest) = line.strip_prefix("event:") {
+            event = rest.trim().to_string();
+        } else if let Some(rest) = line.strip_prefix("data:") {
+            data.push_str(rest.trim_start());
+        }
+    }
+    let value = if data.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_str(&data).expect("SSE data is JSON")
+    };
+    (event, value)
+}
+
+/// Assert that no delta reaches this stream within a short window — used to prove
+/// a stream scoped to one group stays silent for another group's activity.
+async fn expect_no_stream_event(body: &mut Body) {
+    let got = timeout(Duration::from_millis(500), body.frame()).await;
+    assert!(
+        got.is_err(),
+        "a delta reached a stream it should not have: {got:?}"
+    );
+}
+
+// --- acceptance: a subscriber receives a delta after a mutation, carrying the
+// --- ride as the feed now shows it — new request, then each lifecycle step ---
+
+#[tokio::test]
+async fn a_subscriber_receives_a_delta_after_each_mutation() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // A bystander who is only watching the board opens the live stream.
+    let resp = open_stream(&app, &f.group_id, &f.rider_token).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+
+    // The passenger asks for a ride over REST, as always...
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    // ...and it arrives on the watcher's stream as a `ride` delta, carrying the
+    // whole ride the way the feed shows it.
+    let (event, data) = next_stream_event(&mut body).await;
+    assert_eq!(event, "ride");
+    assert_eq!(data["ride"]["id"], ride_id);
+    assert_eq!(data["ride"]["status"], "open");
+    assert_eq!(data["ride"]["pickup"]["name"], "The Pier");
+
+    // The driver claims it — the lifecycle step is a delta too, with the new
+    // status and driver.
+    let (status, _) = ride_action(
+        &app,
+        &f.group_id,
+        &ride_id,
+        &f.driver_token,
+        json!({ "action": "on_my_way" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (event, data) = next_stream_event(&mut body).await;
+    assert_eq!(event, "ride");
+    assert_eq!(data["ride"]["id"], ride_id);
+    assert_eq!(data["ride"]["status"], "accepted");
+    assert_eq!(data["ride"]["driver"]["display_name"], "Wendel");
+}
+
+// --- acceptance: the stream is scoped and authenticated exactly like the feed —
+// --- a non-member can't open it, and never sees another group's deltas ---
+
+#[tokio::test]
+async fn the_stream_is_scoped_to_the_group() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // A separate group, with its own member and its own places.
+    let other = create_group(&app, "Lake 2027", "Mallory", "5550001111").await;
+    let other_id = other["group_id"].as_str().unwrap().to_string();
+    let other_token = other["token"].as_str().unwrap().to_string();
+    let other_driver = join_group(&app, &other_id, "Nate", "5550002222").await;
+    let other_driver_id = other_driver["member"]["id"].as_str().unwrap().to_string();
+    let other_pickup = create_place(&app, &other_id, &other_token, "The Dock", 41.0, -85.0).await;
+    let other_dropoff =
+        create_place(&app, &other_id, &other_token, "The Marina", 41.1, -85.1).await;
+
+    // A token from another group can't open this group's stream — same 403 the
+    // plain feed gives.
+    let resp = open_stream(&app, &f.group_id, &other_token).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // No token at all is a 401.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/groups/{}/feed/stream", f.group_id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // A member watches their own group's stream...
+    let resp = open_stream(&app, &f.group_id, &f.rider_token).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut body = resp.into_body();
+
+    // ...and a ride requested in the *other* group never reaches it.
+    let (status, _) = request_ride(
+        &app,
+        &other_id,
+        &other_token,
+        json!({
+            "pickup_id": other_pickup,
+            "dropoff_id": other_dropoff,
+            "target_ids": [other_driver_id],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    expect_no_stream_event(&mut body).await;
+
+    // But a ride in the watcher's own group does — proving the stream is live,
+    // not merely silent.
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+    let (event, data) = next_stream_event(&mut body).await;
+    assert_eq!(event, "ride");
+    assert_eq!(data["ride"]["id"], ride_id);
+}
+
+// --- acceptance: two subscribers in the same group both see a mutation, which
+// --- is what lets two devices reflect each other's activity live ---
+
+#[tokio::test]
+async fn every_subscriber_in_the_group_sees_a_delta() {
+    let app = test_app().await;
+    let f = ride_fixture(&app).await;
+
+    // Two different people in the group each open the stream — two devices.
+    let mut first = open_stream(&app, &f.group_id, &f.passenger_token)
+        .await
+        .into_body();
+    let mut second = open_stream(&app, &f.group_id, &f.driver_token)
+        .await
+        .into_body();
+
+    let ride_id = open_ride(&app, &f, &[&f.driver_id]).await;
+
+    for body in [&mut first, &mut second] {
+        let (event, data) = next_stream_event(body).await;
+        assert_eq!(event, "ride");
+        assert_eq!(data["ride"]["id"], ride_id);
+    }
 }
