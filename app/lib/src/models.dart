@@ -383,4 +383,26 @@ class Feed {
         .map((r) => Ride.fromJson(r as Map<String, dynamic>))
         .toList(),
   );
+
+  /// A copy of this feed with [ride] merged in: it replaces the ride of the same
+  /// id if the board already has it, or is inserted if it's new. This is how a
+  /// live delta is applied without re-fetching the whole board.
+  ///
+  /// The result is kept newest-first, the same order the server returns — by
+  /// creation time, then id as a stable tiebreaker — so a live update lands in
+  /// the same place a refetch would have put it. A ride from another group is
+  /// ignored; the stream is group-scoped, but this keeps the merge honest.
+  Feed withRide(Ride ride) {
+    if (ride.groupId != groupId) return this;
+    final merged =
+        [
+          for (final r in rides)
+            if (r.id != ride.id) r,
+          ride,
+        ]..sort((a, b) {
+          final byTime = b.createdAt.compareTo(a.createdAt);
+          return byTime != 0 ? byTime : b.id.compareTo(a.id);
+        });
+    return Feed(groupId: groupId, groupName: groupName, rides: merged);
+  }
 }

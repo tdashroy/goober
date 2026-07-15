@@ -6,9 +6,14 @@ group's shared activity feed. The big **"Get a ride"** button opens the request
 flow: pick a pick-up and drop-off from the curated places, say how many are
 riding (1–8), offer something if you like, choose **now** or a scheduled time,
 and ping one person from the roster. The new request appears in the feed for
-the whole group, and the feed keeps itself fresh: it quietly refetches every
-30 seconds (swapping new rides in without a spinner; a failed poll leaves the
-board alone) and can be pulled to refresh, even from the empty state.
+the whole group, and the feed keeps itself fresh **live**: it subscribes to a
+Server-Sent Events stream and merges each change — a new request, an answer, a
+lifecycle step — into the board the instant it happens, so a second device sees
+the first's activity without a refresh. The initial load and the source of truth
+stay the REST feed; the stream layers updates on top, reconnects on a dropped
+connection and refetches to converge, and a slow 30-second poll sits under it as
+a backstop (swapping new rides in without a spinner; a failed poll leaves the
+board alone). The board can still be pulled to refresh, even from the empty state.
 
 The ride is then driven from its card on that same board, and what the card
 offers depends on who is looking at it. Someone who was **pinged**, while the
@@ -78,8 +83,10 @@ flutter test        # widget + unit tests, headless — no emulator needed
   size, offer, timing), the ride lifecycle from the card (the response menu for a
   pinged member, claiming, arriving, delivering as driver or passenger, and
   tapping a lead to ask that person instead), auto-refresh and pull-to-refresh
-  behavior, "Get a ride" opening the request flow, and the labeled app-bar
-  entries: Places for every member, Admin for admins only, and where each leads.
+  behavior, the live stream merging a pushed ride in place and a resync event
+  refetching the board, "Get a ride" opening the request flow, and the labeled
+  app-bar entries: Places for every member, Admin for admins only, and where each
+  leads.
 - `test/request_ride_screen_test.dart` — the request flow: route, party size,
   offer, now-or-scheduled, the direct ping to one member, and recovery when a
   request is rejected or the server is unreachable.
@@ -90,13 +97,23 @@ flutter test        # widget + unit tests, headless — no emulator needed
 - `test/admin_screen_test.dart` — the admin screen names its actions, says the
   area is admin-only, and "Manage places" opens places management.
 - `test/api_client_test.dart` — request shapes, auth header, error mapping
-  (groups + places + rides).
+  (groups + places + rides), and the feed stream (opening the path with the
+  token, parsing a ride delta and a resync event, non-2xx as an error).
+- `test/feed_stream_test.dart` — the SSE parser, `Feed.withRide` delta-merge
+  (insert/replace newest-first, ignore another group's ride), and `LiveFeed`
+  reconnect-then-resync after a drop, in isolation.
+- `test/fake_stream_client.dart` — test double modelling the held-open SSE
+  endpoint, so the one-shot widget-test mocks aren't disturbed.
 - `test/boot_flow_test.dart` — fresh boot → onboarding → persist token → feed;
   and boot-with-token → straight to feed.
 
 ## Structure
 
 - `lib/src/api_client.dart` — HTTP client; `baseUrl` + `http.Client` injected.
+  `streamFeed` opens the live SSE feed and parses it into typed `FeedEvent`s.
+- `lib/src/feed_stream.dart` — the live-feed overlay: `LiveFeed` holds the SSE
+  connection open, reconnects on a drop and asks for a resync so the board
+  converges, over an injected `connect` opener that keeps its logic socket-free.
 - `lib/src/token_store.dart` — `TokenStore` interface, `SharedPreferences` +
   in-memory implementations.
 - `lib/src/time_format.dart` — small dependency-free formatters for ride times

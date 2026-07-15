@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../feed_stream.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../time_format.dart';
@@ -24,8 +25,10 @@ class FeedScreen extends StatefulWidget {
     required this.onUnauthenticated,
   });
 
-  /// How often the board quietly refetches, so a ride someone else just posted
-  /// shows up without anyone pulling to refresh.
+  /// How often the board quietly refetches as a backstop. The live stream is
+  /// what surfaces a change the instant it happens; this slower poll is the net
+  /// under it — it closes the brief gap between the initial load and the stream
+  /// connecting, and catches anything a dropped connection might have missed.
   static const Duration autoRefreshInterval = Duration(seconds: 30);
 
   final ApiClient api;
@@ -52,6 +55,8 @@ class _FeedScreenState extends State<FeedScreen> {
   Object? _error;
   bool _loading = true;
   Timer? _refreshTimer;
+  LiveFeed? _live;
+  StreamSubscription<FeedEvent>? _liveSub;
 
   @override
   void initState() {
@@ -61,12 +66,39 @@ class _FeedScreenState extends State<FeedScreen> {
       FeedScreen.autoRefreshInterval,
       (_) => _refresh(),
     );
+    // Layer live updates on top of the initial load: the stream pushes each
+    // change as it happens, and a reconnect asks us to refetch and converge.
+    _live = LiveFeed(
+      connect: () => widget.api.streamFeed(
+        groupId: widget.session.groupId,
+        token: widget.session.token,
+      ),
+    );
+    _liveSub = _live!.events.listen(_onLiveEvent);
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _liveSub?.cancel();
+    _live?.close();
     super.dispose();
+  }
+
+  /// Apply one live event. A [RideChanged] is merged into the board in place —
+  /// no full re-fetch — while a [FeedResync] (sent after a reconnect) triggers an
+  /// ordinary refetch so the board converges on the current truth. A delta that
+  /// arrives before the initial load has landed is dropped; that first load, and
+  /// any resync, carry the full picture.
+  void _onLiveEvent(FeedEvent event) {
+    switch (event) {
+      case RideChanged(:final ride):
+        final feed = _feed;
+        if (feed == null) return;
+        setState(() => _feed = feed.withRide(ride));
+      case FeedResync():
+        _refresh();
+    }
   }
 
   /// Full reload with the loading spinner: the first load, and retrying out of

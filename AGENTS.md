@@ -81,6 +81,22 @@ in `server/README.md` and `app/README.md`.
   so `initState` never runs again and the screen keeps what it fetched the first
   time — the assertions then quietly test the old world. Two scenarios mean two
   `testWidgets`.
+- **Live feed = REST initial load + an SSE overlay.** `GET
+  /groups/{id}/feed/stream` holds a connection open and pushes one `ride` event
+  per feed change (a full `RideView`, so the client upserts that one ride via
+  `Feed.withRide` with no re-fetch); a `resync` event, and every client reconnect,
+  mean "refetch the whole board to converge". The server fans out over a
+  `broadcast` channel per group (`FeedHub` in shared `AppState`, reached through
+  `FromRef`); the write paths (`create_ride`, `ride_action`) publish after
+  committing. Commands still go over REST — only deltas travel down the stream.
+- **Testing the SSE client:** `FeedScreen` always opens a live stream in
+  `initState`, so a widget test whose mock returns a *finite* body for
+  `/feed/stream` triggers a reconnect storm that fights the test clock. Wrap the
+  mock in `test/fake_stream_client.dart`'s `FakeStreamClient`: it intercepts the
+  stream path with a **held-open** response (never reaching the inner mock, so its
+  request counting/one-shot bodies are untouched) and lets a test `push` deltas or
+  `drop` the connection. `LiveFeed` takes an injected `connect` opener so its
+  reconnect/resync logic is unit-testable without a socket.
 
 ### Containerized dev environment
 

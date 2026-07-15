@@ -12,6 +12,8 @@ import 'package:goober/src/theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'fake_stream_client.dart';
+
 Session _session({bool isAdmin = true}) => Session(
   token: 'tok-abc',
   groupId: 'g1',
@@ -112,7 +114,7 @@ ApiClient _feedApi(
       'rides': rides,
     });
   });
-  return ApiClient(baseUrl: 'http://test', client: client);
+  return ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client));
 }
 
 /// Serves the feed plus the places + roster the request screen loads, so a test
@@ -139,7 +141,29 @@ ApiClient _feedAndRequestApi(List<Map<String, dynamic>> rides) {
       'rides': rides,
     });
   });
-  return ApiClient(baseUrl: 'http://test', client: client);
+  return ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client));
+}
+
+/// A feed API whose live stream is exposed, so a test can push deltas down it and
+/// watch the board react. [rides] is called for what a refetch returns (the
+/// initial load and any resync), so a test can swap it out to prove a resync
+/// actually refetches.
+(ApiClient, FakeStreamClient) _liveFeedApi(
+  List<Map<String, dynamic>> Function() rides,
+) {
+  final fake = FakeStreamClient(
+    MockClient((req) async {
+      if (req.url.path.endsWith('/places')) {
+        return _json({'group_id': 'g1', 'places': <Map<String, dynamic>>[]});
+      }
+      return _json({
+        'group_id': 'g1',
+        'group_name': 'Beach 2027',
+        'rides': rides(),
+      });
+    }),
+  );
+  return (ApiClient(baseUrl: 'http://test', client: fake), fake);
 }
 
 /// A board that answers the feed, the roster and the steps the card posts back
@@ -162,7 +186,7 @@ class _Board {
 
   late final ApiClient api = ApiClient(
     baseUrl: 'http://test',
-    client: MockClient(_handle),
+    client: FakeStreamClient(MockClient(_handle)),
   );
 
   Future<http.Response> _handle(http.Request req) async {
@@ -362,7 +386,10 @@ void main() {
         'rides': calls == 1 ? [] : [_ride()],
       });
     });
-    await _pumpFeed(tester, ApiClient(baseUrl: 'http://test', client: client));
+    await _pumpFeed(
+      tester,
+      ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client)),
+    );
 
     expect(find.byType(EmptyFeed), findsOneWidget);
 
@@ -375,6 +402,63 @@ void main() {
 
     expect(calls, 2);
     expect(find.byType(EmptyFeed), findsNothing);
+    expect(find.byKey(const Key('ride-r1')), findsOneWidget);
+  });
+
+  // --- live updates over the stream ---
+
+  testWidgets('a ride pushed down the stream appears without a refetch', (
+    tester,
+  ) async {
+    final (api, stream) = _liveFeedApi(() => []);
+    await _pumpFeed(tester, api);
+
+    // The board starts empty — no ride has been posted.
+    expect(find.byType(EmptyFeed), findsOneWidget);
+
+    // Someone else posts a request; it arrives live.
+    stream.push(_ride(id: 'r1'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(EmptyFeed), findsNothing);
+    expect(find.byKey(const Key('ride-r1')), findsOneWidget);
+    expect(find.text('Emily → Wendel'), findsOneWidget);
+  });
+
+  testWidgets('a live delta updates an existing ride in place', (tester) async {
+    final (api, stream) = _liveFeedApi(() => [_ride(id: 'r1')]);
+    await _pumpFeed(tester, api);
+
+    // Open, so there's no status line yet.
+    expect(find.byKey(const Key('ride-r1')), findsOneWidget);
+    expect(find.byKey(const Key('ride-status-r1')), findsNothing);
+
+    // The ride is claimed elsewhere; the same card now says who's driving.
+    stream.push(
+      _ride(id: 'r1', status: 'accepted', driver: _ref('t-Wendel', 'Wendel')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wendel is on the way'), findsOneWidget);
+    // Still one card — the delta replaced the ride, it didn't add a second.
+    expect(find.byType(RideCard), findsOneWidget);
+  });
+
+  testWidgets('a resync event refetches the board so it converges', (
+    tester,
+  ) async {
+    var rides = <Map<String, dynamic>>[];
+    final (api, stream) = _liveFeedApi(() => rides);
+    await _pumpFeed(tester, api);
+    expect(find.byType(EmptyFeed), findsOneWidget);
+
+    // The world moves on, then the server asks us to resync (as it does after a
+    // subscriber falls behind, or the client after a reconnect).
+    rides = [_ride(id: 'r1')];
+    stream.pushRaw('event: resync\ndata:\n\n');
+    await tester.pumpAndSettle();
+
+    // The board caught up via a refetch.
     expect(find.byKey(const Key('ride-r1')), findsOneWidget);
   });
 
@@ -392,7 +476,10 @@ void main() {
         'rides': calls == 1 ? [] : [_ride()],
       });
     });
-    await _pumpFeed(tester, ApiClient(baseUrl: 'http://test', client: client));
+    await _pumpFeed(
+      tester,
+      ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client)),
+    );
 
     expect(calls, 1);
     expect(find.byType(EmptyFeed), findsOneWidget);
@@ -422,7 +509,10 @@ void main() {
         'rides': [_ride()],
       });
     });
-    await _pumpFeed(tester, ApiClient(baseUrl: 'http://test', client: client));
+    await _pumpFeed(
+      tester,
+      ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client)),
+    );
 
     expect(find.byKey(const Key('ride-r1')), findsOneWidget);
 
@@ -445,7 +535,10 @@ void main() {
         'rides': [_ride()],
       });
     });
-    await _pumpFeed(tester, ApiClient(baseUrl: 'http://test', client: client));
+    await _pumpFeed(
+      tester,
+      ApiClient(baseUrl: 'http://test', client: FakeStreamClient(client)),
+    );
     expect(calls, 1);
 
     await tester.pumpWidget(const SizedBox());

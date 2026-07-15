@@ -102,9 +102,11 @@ the pinged person drives from the feed: answer from a structured menu ("On my
 way" claims the ride, first-come; the "no"s can name who took the cart or who's
 coming instead, tappable to re-ping them), then "I'm here", then "delivered" from
 either end. The new request lands in the group's shared activity feed, which
-everyone sees, and the server enforces every step and audits it. All running
-locally end to end.
+everyone sees and which stays **live** — each request, answer, and lifecycle step
+streams to open apps over Server-Sent Events, so a second device reflects the
+first's activity without a refresh — and the server enforces every step and
+audits it. All running locally end to end.
 
-Still to come: broadcast ("anyone?") requests, SSE, push, points, and cloud
+Still to come: broadcast ("anyone?") requests, push, points, and cloud
 deploy. Suggested build order lives in the PRD. Next real deployment target:
 **July 4, 2027**.
